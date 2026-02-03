@@ -29,6 +29,13 @@ from email.mime.base import MIMEBase
 from email.utils import format_datetime
 from email import encoders
 
+# Try to import LZXPRESS decompressor
+try:
+    from lzxpress import decompress_exchange_body, extract_text_from_html
+    HAS_LZXPRESS = True
+except ImportError:
+    HAS_LZXPRESS = False
+
 # Try to import folder mapping
 try:
     from folder_mapping import get_folder_name as get_mapped_folder_name, SPECIAL_FOLDER_MAP
@@ -1296,51 +1303,64 @@ class MainWindow(QMainWindow):
                     if lv and hasattr(lv, 'get_data'):
                         body_data_raw = lv.get_data()
                         if body_data_raw:
-                            # Exchange NativeBody is compressed with header
-                            body_data = body_data_raw
-                            if body_data[:2] in [b'\x18\x79', b'\x18\x78', b'\x18\x9a']:
-                                body_data = body_data[7:]
+                            # Try LZXPRESS decompression first if available
+                            if HAS_LZXPRESS:
+                                try:
+                                    decompressed = decompress_exchange_body(body_data_raw)
+                                    if decompressed and len(decompressed) > 10:
+                                        raw_html = decompressed.decode('utf-8', errors='ignore')
+                                        body_text = extract_text_from_html(decompressed)
+                                except Exception as e:
+                                    pass  # Fall through to manual extraction
 
-                            # Get raw HTML (with compression artifacts)
-                            raw_html = body_data.decode('latin-1', errors='ignore')
-
-                            # Extract text content between <p> tags
-                            # Look for pattern: >text</p or >text</
-                            p_matches = re.findall(rb'>([^<]{1,500})</p', body_data, re.IGNORECASE)
-                            if p_matches:
-                                text_parts = []
-                                for match in p_matches:
-                                    # Filter to printable ASCII
-                                    filtered = bytes(c for c in match if 32 <= c <= 126)
-                                    if filtered and len(filtered) > 0:
-                                        text_parts.append(filtered.decode('ascii', errors='ignore'))
-                                body_text = '\n'.join(text_parts)
-
-                            # If no <p> content, try general text extraction
+                            # Fallback: Manual extraction if LZXPRESS not available or failed
                             if not body_text:
-                                text_parts = []
-                                in_tag = False
-                                current_text = bytearray()
+                                # Exchange NativeBody is compressed with header
+                                body_data = body_data_raw
+                                if body_data[:2] in [b'\x18\x79', b'\x18\x78', b'\x18\x9a']:
+                                    body_data = body_data[7:]
 
-                                for b in body_data:
-                                    if b == ord('<'):
-                                        if current_text:
-                                            filtered = bytes(c for c in current_text if 32 <= c <= 126)
-                                            if filtered and len(filtered) >= 2:
-                                                text_parts.append(filtered.decode('ascii', errors='ignore'))
-                                            current_text = bytearray()
-                                        in_tag = True
-                                    elif b == ord('>'):
-                                        in_tag = False
-                                    elif not in_tag:
-                                        current_text.append(b)
+                                # Get raw HTML (with compression artifacts)
+                                if not raw_html:
+                                    raw_html = body_data.decode('latin-1', errors='ignore')
 
-                                if current_text:
-                                    filtered = bytes(c for c in current_text if 32 <= c <= 126)
-                                    if filtered:
-                                        text_parts.append(filtered.decode('ascii', errors='ignore'))
+                                # Extract text content between <p> tags
+                                # Look for pattern: >text</p or >text</
+                                p_matches = re.findall(rb'>([^<]{1,500})</p', body_data, re.IGNORECASE)
+                                if p_matches:
+                                    text_parts = []
+                                    for match in p_matches:
+                                        # Filter to printable ASCII
+                                        filtered = bytes(c for c in match if 32 <= c <= 126)
+                                        if filtered and len(filtered) > 0:
+                                            text_parts.append(filtered.decode('ascii', errors='ignore'))
+                                    body_text = '\n'.join(text_parts)
 
-                                body_text = ' '.join(t.strip() for t in text_parts if len(t.strip()) >= 2)
+                                # If no <p> content, try general text extraction
+                                if not body_text:
+                                    text_parts = []
+                                    in_tag = False
+                                    current_text = bytearray()
+
+                                    for b in body_data:
+                                        if b == ord('<'):
+                                            if current_text:
+                                                filtered = bytes(c for c in current_text if 32 <= c <= 126)
+                                                if filtered and len(filtered) >= 2:
+                                                    text_parts.append(filtered.decode('ascii', errors='ignore'))
+                                                current_text = bytearray()
+                                            in_tag = True
+                                        elif b == ord('>'):
+                                            in_tag = False
+                                        elif not in_tag:
+                                            current_text.append(b)
+
+                                    if current_text:
+                                        filtered = bytes(c for c in current_text if 32 <= c <= 126)
+                                        if filtered:
+                                            text_parts.append(filtered.decode('ascii', errors='ignore'))
+
+                                    body_text = ' '.join(t.strip() for t in text_parts if len(t.strip()) >= 2)
             except:
                 pass
 
@@ -1371,13 +1391,16 @@ class MainWindow(QMainWindow):
         if body_text:
             self.body_view.setPlainText(body_text)
         else:
-            note = """(Body content is compressed using Exchange LZXPRESS format)
+            lzx_status = "LZXPRESS decompressor loaded" if HAS_LZXPRESS else "LZXPRESS module not available"
+            note = f"""(Body content could not be fully extracted)
 
-Exchange compresses HTML body content. Repeated patterns like "olololo"
-are heavily compressed and cannot be fully recovered without proper
-decompression.
+{lzx_status}
 
-Check the "Body (HTML)" tab for the raw compressed data.
+Exchange compresses HTML body content using LZXPRESS Plain LZ77 format.
+Some highly compressed content (like repeated patterns) may not fully
+decompress.
+
+Check the "Body (HTML)" tab for the raw/decompressed HTML data.
 
 To see the original body, export the message as EML and view in an
 email client, or check the original .eml file if available."""
@@ -1737,7 +1760,7 @@ email client, or check the original .eml file if available."""
                 pass
 
         count = len(self.current_attachments)
-        self.content_tabs.setTabText(3, f"Attachments ({count})")
+        self.content_tabs.setTabText(5, f"Attachments ({count})")
 
         if count > 0:
             self.export_attach_btn.setEnabled(True)
