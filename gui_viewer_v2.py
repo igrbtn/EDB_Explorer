@@ -618,11 +618,16 @@ class MainWindow(QMainWindow):
         self.body_view.setFont(QFont("Arial", 10))
         self.content_tabs.addTab(self.body_view, "Body (Text)")
 
-        # Body HTML tab
+        # Body HTML tab (rendered)
         self.body_html_view = QTextEdit()
         self.body_html_view.setReadOnly(True)
-        self.body_html_view.setFont(QFont("Consolas", 9))
         self.content_tabs.addTab(self.body_html_view, "Body (HTML)")
+
+        # Raw HTML Source tab
+        self.body_source_view = QTextEdit()
+        self.body_source_view.setReadOnly(True)
+        self.body_source_view.setFont(QFont("Consolas", 9))
+        self.content_tabs.addTab(self.body_source_view, "HTML Source")
 
         # Parsed tab
         self.parsed_view = QTextEdit()
@@ -1406,22 +1411,29 @@ To see the original body, export the message as EML and view in an
 email client, or check the original .eml file if available."""
             self.body_view.setPlainText(note)
 
-        # Set Body (HTML) view - show raw HTML with compression artifacts
+        # Set Body (HTML) view - render HTML like a browser
         if raw_html:
-            # Clean up for display - remove control characters but keep structure
-            html_display = ''.join(c if c.isprintable() or c in '\r\n\t' else '?' for c in raw_html)
-            self.body_html_view.setPlainText(html_display)
+            # Clean up HTML for rendering - remove control characters
+            html_clean = ''.join(c if c.isprintable() or c in '\r\n\t' else ' ' for c in raw_html)
+            # Render as HTML
+            self.body_html_view.setHtml(html_clean)
+            # Also show source in the source view
+            html_source = ''.join(c if c.isprintable() or c in '\r\n\t' else '?' for c in raw_html)
+            self.body_source_view.setPlainText(html_source)
         elif body_data_raw:
-            # Show hex dump of raw body data
+            # Show hex dump in both views
             hex_lines = []
             for i in range(0, min(len(body_data_raw), 1000), 16):
                 chunk = body_data_raw[i:i+16]
                 hex_part = ' '.join(f'{b:02x}' for b in chunk)
                 ascii_part = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in chunk)
                 hex_lines.append(f'{i:04x}: {hex_part:<48} {ascii_part}')
-            self.body_html_view.setPlainText('\n'.join(hex_lines))
+            hex_text = '\n'.join(hex_lines)
+            self.body_html_view.setPlainText("(No valid HTML - showing hex dump)")
+            self.body_source_view.setPlainText(hex_text)
         else:
             self.body_html_view.setPlainText("(No HTML body data)")
+            self.body_source_view.setPlainText("(No HTML body data)")
 
         # Store for EML export
         self.current_email_data['body_text'] = body_text
@@ -1588,7 +1600,7 @@ email client, or check the original .eml file if available."""
         # Check if message has attachments
         has_attach = get_bytes_value(record, col_map.get('HasAttachments', -1))
         if not has_attach or has_attach == b'\x00':
-            self.content_tabs.setTabText(5, "Attachments (0)")
+            self.content_tabs.setTabText(6, "Attachments (0)")
             return
 
         # Get SubobjectsBlob for attachment linking
@@ -1600,7 +1612,7 @@ email client, or check the original .eml file if available."""
         attach_table = self.tables.get(attach_table_name)
 
         if not attach_table:
-            self.content_tabs.setTabText(5, "Attachments (0)")
+            self.content_tabs.setTabText(6, "Attachments (0)")
             return
 
         attach_col_map = get_column_map(attach_table)
@@ -1760,7 +1772,7 @@ email client, or check the original .eml file if available."""
                 pass
 
         count = len(self.current_attachments)
-        self.content_tabs.setTabText(5, f"Attachments ({count})")
+        self.content_tabs.setTabText(6, f"Attachments ({count})")
 
         if count > 0:
             self.export_attach_btn.setEnabled(True)
