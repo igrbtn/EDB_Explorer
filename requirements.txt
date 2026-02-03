@@ -1,0 +1,5 @@
+PyQt6>=6.4.0
+libesedb-python>=20240420
+python-dateutil>=2.8.0
+chardet>=5.0.0
+pywin32>=305;platform_system=="Windows"

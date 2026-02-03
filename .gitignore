@@ -1,0 +1,40 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary/generated files
+=*
+*.log
+*.tmp
+
+# Export directories (contain user data)
+eml_export/
+extracted_attachments/
+
+# Large data files
+*.edb
+*.pst
+*.ost
+
+# Credentials
+*.env
+credentials*
