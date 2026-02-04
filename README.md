@@ -19,6 +19,7 @@ A Python GUI application for viewing and exporting emails from Microsoft Exchang
 Python 3.8+
 PyQt6
 pyesedb (libesedb-python)
+dissect.esedb (for LZXPRESS decompression)
 ```
 
 ## Installation
@@ -26,7 +27,10 @@ pyesedb (libesedb-python)
 ```bash
 pip install PyQt6
 pip install libesedb-python
+pip install dissect.esedb
 ```
+
+**Note:** The `dissect.esedb` package provides proper MS-XCA LZXPRESS decompression for Exchange HTML body content. Without it, a fallback decoder is used which may have reduced accuracy.
 
 ## Usage
 
@@ -321,7 +325,7 @@ Example encoding:
 
 ### NativeBody Compression
 
-HTML body content uses Exchange LZXPRESS compression (variant of MS-XCA):
+HTML body content uses Exchange LZXPRESS compression (MS-XCA format):
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -334,22 +338,21 @@ HTML body content uses Exchange LZXPRESS compression (variant of MS-XCA):
 │  Compressed HTML data using LZXPRESS encoding   │
 └─────────────────────────────────────────────────┘
 
-LZXPRESS Back-Reference Encoding:
-  2-byte token: value = byte1 | (byte2 << 8)
-  offset = (value >> 3) + 1
-  length = (value & 7) + 3
-
-Pattern Recognition (in priority order):
-  1. Control sequence: 00 XX YY 00 (XX,YY < 0x20) - skip
-  2. Repeat pattern: char 00 00 non-null - output char 4x
-  3. High-bit back-ref: 0x80+ YY - apply 2-byte LZXPRESS token
-  4. Low back-ref: XX 00 (XX >= 0x20) - try 1-byte token if valid
-  5. Whitespace: 0x09, 0x0a, 0x0d - literal
-  6. Control bytes: 0x00-0x1f - skip
-  7. Printable: 0x20-0x7e - literal
-
-Decompression implemented in lzxpress.py
+Header Type Values:
+  0x18, 0x19 = LZXPRESS compressed HTML
+  0x17 = Plain text (uncompressed)
+  0x10, 0x12 = Other format (plain text)
 ```
+
+**Decompression:** The `dissect.esedb.compression.decompress()` function properly handles
+MS-XCA LZXPRESS decompression. This is used automatically when the library is installed.
+
+```python
+from dissect.esedb.compression import decompress
+result = decompress(native_body_data)  # Pass full data including 7-byte header
+```
+
+Decompression implemented in `lzxpress.py` with `dissect.esedb` integration.
 
 ### FolderId Format
 
@@ -387,13 +390,15 @@ def filetime_to_datetime(filetime_bytes):
 
 # Known Limitations
 
-1. **Body Compression**: NativeBody uses LZXPRESS compression. Repeated patterns may not fully decompress.
+1. **Body Compression**: NativeBody uses LZXPRESS compression. With `dissect.esedb` installed, decompression works correctly. Without it, a fallback decoder is used with reduced accuracy.
 
 2. **Encrypted Fields**: Some fields (DisplayName, Name) may be encrypted in newer Exchange versions.
 
 3. **Large Databases**: Loading large EDB files (>10GB) may be slow.
 
 4. **Offline Only**: EDB files must be dismounted/offline to read.
+
+5. **Plain Text Bodies**: Messages with type 0x10/0x12 (plain text format) may not extract correctly as they use a different encoding.
 
 ---
 
