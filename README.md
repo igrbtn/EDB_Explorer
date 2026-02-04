@@ -6,12 +6,16 @@ A Python GUI application for viewing and exporting emails from Microsoft Exchang
 
 - Browse mailbox folder structure with proper folder names
 - View messages with From, To, Subject, Date fields
-- Display email body (text and HTML views)
+- Display email body (text and HTML views with QWebEngineView)
 - Extract and save attachments (including large Long Value attachments)
-- Export emails as EML format
+- **Export emails as EML format** (with body, headers, and attachments)
 - Export entire folders
 - Support for hidden/system items toggle
 - Mailbox owner detection from Sent Items
+- **Multi-encoding support** (UTF-8, Cyrillic Windows-1251, KOI8-R, ISO-8859-5, etc.)
+- Smart detection of encrypted fields (displays empty instead of garbled text)
+- Sent Items folder shows recipient instead of sender in message list
+- Resizable window (minimum 800x500)
 
 ## Requirements
 
@@ -399,7 +403,7 @@ def filetime_to_datetime(filetime_bytes):
 
 1. **Body Compression**: NativeBody uses LZXPRESS compression. With `dissect.esedb` installed, decompression works correctly. Without it, a fallback decoder is used with reduced accuracy.
 
-2. **Encrypted Fields**: Some fields (DisplayName, Name) may be encrypted in newer Exchange versions.
+2. **Encrypted Fields**: Some fields (DisplayName, DisplayTo, Name) may be encrypted in newer Exchange versions. The application detects encrypted fields and displays them as empty instead of garbled text.
 
 3. **Large Databases**: Loading large EDB files (>10GB) may be slow.
 
