@@ -18,10 +18,10 @@ from PyQt6.QtWidgets import (
     QSplitter, QTextEdit, QComboBox, QGroupBox, QLineEdit,
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
     QStatusBar, QMessageBox, QProgressBar, QMenu, QListWidget,
-    QListWidgetItem, QCheckBox
+    QListWidgetItem, QCheckBox, QTextBrowser
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QAction
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QUrl
+from PyQt6.QtGui import QFont, QAction, QTextOption
 
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -724,16 +724,26 @@ class MainWindow(QMainWindow):
 
         self.content_tabs = QTabWidget()
 
-        # Body Plain Text tab
+        # Body Plain Text tab - with word wrap
         self.body_view = QTextEdit()
         self.body_view.setReadOnly(True)
-        self.body_view.setFont(QFont("Arial", 10))
+        self.body_view.setFont(QFont("Arial", 11))
+        self.body_view.setWordWrapMode(QTextOption.WrapMode.WordWrap)
+        self.body_view.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         self.content_tabs.addTab(self.body_view, "Body (Text)")
 
-        # HTML Source tab (decompressed HTML)
+        # Body HTML tab - renders HTML like a browser
+        self.html_browser_view = QTextBrowser()
+        self.html_browser_view.setReadOnly(True)
+        self.html_browser_view.setOpenExternalLinks(True)
+        self.html_browser_view.setFont(QFont("Arial", 11))
+        self.content_tabs.addTab(self.html_browser_view, "Body (HTML)")
+
+        # HTML Source tab - shows raw HTML code
         self.html_source_view = QTextEdit()
         self.html_source_view.setReadOnly(True)
         self.html_source_view.setFont(QFont("Consolas", 9))
+        self.html_source_view.setWordWrapMode(QTextOption.WrapMode.NoWrap)
         self.content_tabs.addTab(self.html_source_view, "HTML Source")
 
         # Raw Body tab with compressed/uncompressed toggle
@@ -1528,7 +1538,13 @@ Check the "HTML Source" tab for raw decompressed HTML.
 Check the "Raw Body" tab to see compressed data."""
             self.body_view.setPlainText(note)
 
-        # Set HTML Source view
+        # Set Body (HTML) view - render HTML like a browser
+        if html_source:
+            self.html_browser_view.setHtml(html_source)
+        else:
+            self.html_browser_view.setHtml("<p style='color: gray;'>(No HTML content available)</p>")
+
+        # Set HTML Source view - show raw HTML code
         if html_source:
             self.html_source_view.setPlainText(html_source)
         else:
@@ -1758,7 +1774,7 @@ Check the "Raw Body" tab to see compressed data."""
         # Check if message has attachments
         has_attach = get_bytes_value(record, col_map.get('HasAttachments', -1))
         if not has_attach or has_attach == b'\x00':
-            self.content_tabs.setTabText(6, "Attachments (0)")
+            self.content_tabs.setTabText(7, "Attachments (0)")
             return
 
         # Get SubobjectsBlob for attachment linking
@@ -1770,7 +1786,7 @@ Check the "Raw Body" tab to see compressed data."""
         attach_table = self.tables.get(attach_table_name)
 
         if not attach_table:
-            self.content_tabs.setTabText(6, "Attachments (0)")
+            self.content_tabs.setTabText(7, "Attachments (0)")
             return
 
         attach_col_map = get_column_map(attach_table)
@@ -1930,7 +1946,7 @@ Check the "Raw Body" tab to see compressed data."""
                 pass
 
         count = len(self.current_attachments)
-        self.content_tabs.setTabText(6, f"Attachments ({count})")
+        self.content_tabs.setTabText(7, f"Attachments ({count})")
 
         if count > 0:
             self.export_attach_btn.setEnabled(True)
