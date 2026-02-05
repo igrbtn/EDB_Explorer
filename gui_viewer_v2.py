@@ -777,6 +777,13 @@ class MainWindow(QMainWindow):
         self.show_hidden_cb.stateChanged.connect(self._on_show_hidden_changed)
         top_layout.addWidget(self.show_hidden_cb)
 
+        # About button in top right corner
+        self.about_btn = QPushButton("About")
+        self.about_btn.setFixedSize(50, 22)
+        self.about_btn.clicked.connect(self._on_about)
+        self.about_btn.setToolTip("About this application")
+        top_layout.addWidget(self.about_btn)
+
         layout.addWidget(top_widget)
 
         # Main content splitter
@@ -887,12 +894,6 @@ class MainWindow(QMainWindow):
         self.export_mailbox_btn.setEnabled(False)
         self.export_mailbox_btn.setToolTip("Export entire mailbox with filters (date, from, to, subject)")
         export_layout.addWidget(self.export_mailbox_btn)
-
-        # About button
-        self.about_btn = QPushButton("About")
-        self.about_btn.clicked.connect(self._on_about)
-        self.about_btn.setToolTip("About this application")
-        export_layout.addWidget(self.about_btn)
 
         middle_layout.addLayout(export_layout)
 
