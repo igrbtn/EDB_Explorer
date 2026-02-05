@@ -43,36 +43,59 @@ pip install PyQt6>=6.4.0
 
 echo [2/5] Installing libesedb-python...
 echo.
-echo Trying to install pre-built wheel...
-pip install --only-binary :all: libesedb-python
+
+:: Get Python version
+for /f "tokens=2 delims= " %%a in ('python --version 2^>^&1') do set PYVER=%%a
+for /f "tokens=1,2 delims=." %%a in ("%PYVER%") do (
+    set PYMAJOR=%%a
+    set PYMINOR=%%b
+)
+echo Detected Python %PYMAJOR%.%PYMINOR%
+
+:: Determine wheel URL based on Python version
+set WHEEL_URL=
+if "%PYMAJOR%.%PYMINOR%"=="3.8" set WHEEL_URL=https://files.pythonhosted.org/packages/57/a9/dd2a2f5a3ad52de12236bc49bf78162349e65c854cab69f570d28a0eb061/libesedb_python-20240420-cp38-cp38-win_amd64.whl
+if "%PYMAJOR%.%PYMINOR%"=="3.9" set WHEEL_URL=https://files.pythonhosted.org/packages/0d/91/e1ec78c214d8d79e9b9ad19979eb116510f295de01398c2a36beda9b6d92/libesedb_python-20240420-cp39-cp39-win_amd64.whl
+if "%PYMAJOR%.%PYMINOR%"=="3.10" set WHEEL_URL=https://files.pythonhosted.org/packages/38/3d/daa157ffac8402608921723315c553d3c423fcf8f2ee453155769cfafc21/libesedb_python-20240420-cp310-cp310-win_amd64.whl
+if "%PYMAJOR%.%PYMINOR%"=="3.11" set WHEEL_URL=https://files.pythonhosted.org/packages/fc/a6/efa948efafe4e2e738783ae407fc02734a8f14235d2a0e6adf6a7aa68e74/libesedb_python-20240420-cp311-cp311-win_amd64.whl
+if "%PYMAJOR%.%PYMINOR%"=="3.12" set WHEEL_URL=https://files.pythonhosted.org/packages/72/21/bb8a4adc71ba781815c191b349dce34b60b188e5e6b557c6770894250794/libesedb_python-20240420-cp312-cp312-win_amd64.whl
+
+echo Trying pip install...
+pip install libesedb-python
 if errorlevel 1 (
     echo.
-    echo Pre-built wheel not found for your Python version.
-    echo Trying to build from source...
-    pip install libesedb-python
-    if errorlevel 1 (
-        echo.
-        echo ==========================================
-        echo  libesedb-python installation FAILED
-        echo ==========================================
-        echo.
-        echo Pre-built wheels are available for Python 3.8-3.12.
-        echo Your Python version may not be supported.
-        echo.
-        echo Options:
-        echo.
-        echo 1. Install Python 3.10, 3.11, or 3.12 from python.org
-        echo    (Pre-built wheels are available for these versions)
-        echo.
-        echo 2. Install Visual C++ Build Tools to compile from source:
-        echo    https://visualstudio.microsoft.com/visual-cpp-build-tools/
-        echo    Select "Desktop development with C++" and restart PC
-        echo.
-        echo ==========================================
-        pause
-        exit /b 1
+    echo Pip install failed. Trying direct wheel download...
+
+    if defined WHEEL_URL (
+        echo Downloading wheel for Python %PYMAJOR%.%PYMINOR%...
+        curl -L -o libesedb_python.whl "%WHEEL_URL%" 2>nul || powershell -Command "Invoke-WebRequest -Uri '%WHEEL_URL%' -OutFile 'libesedb_python.whl'"
+        if exist libesedb_python.whl (
+            pip install libesedb_python.whl
+            del libesedb_python.whl
+            if not errorlevel 1 (
+                echo [OK] libesedb-python installed from wheel
+                goto :libesedb_done
+            )
+        )
     )
+
+    echo.
+    echo ==========================================
+    echo  libesedb-python installation FAILED
+    echo ==========================================
+    echo.
+    echo Your Python version: %PYMAJOR%.%PYMINOR%
+    echo.
+    echo Pre-built wheels are available for Python 3.10, 3.11, 3.12
+    echo.
+    echo Options:
+    echo 1. Install Python 3.12 from python.org (recommended)
+    echo 2. Install Visual C++ Build Tools to compile from source
+    echo.
+    pause
+    exit /b 1
 )
+:libesedb_done
 
 echo [3/5] Installing dissect.esedb...
 pip install dissect.esedb>=3.0
