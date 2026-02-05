@@ -42,10 +42,36 @@ echo [1/5] Installing PyQt6...
 pip install PyQt6>=6.4.0
 
 echo [2/5] Installing libesedb-python...
-pip install libesedb-python>=20240420
+echo.
+echo NOTE: libesedb-python requires Microsoft Visual C++ Build Tools to compile.
+echo.
+pip install libesedb-python
 if errorlevel 1 (
-    echo [WARNING] libesedb-python failed. Trying binary-only install...
-    pip install --only-binary :all: libesedb-python
+    echo.
+    echo ==========================================
+    echo  libesedb-python installation FAILED
+    echo ==========================================
+    echo.
+    echo This package is REQUIRED and needs Visual C++ Build Tools.
+    echo.
+    echo Please follow these steps:
+    echo.
+    echo 1. Download Visual C++ Build Tools from:
+    echo    https://visualstudio.microsoft.com/visual-cpp-build-tools/
+    echo.
+    echo 2. Run the installer
+    echo.
+    echo 3. Select "Desktop development with C++" workload
+    echo.
+    echo 4. Click Install and wait for completion
+    echo.
+    echo 5. RESTART your computer
+    echo.
+    echo 6. Run this script again
+    echo.
+    echo ==========================================
+    pause
+    exit /b 1
 )
 
 echo [3/5] Installing dissect.esedb...
@@ -59,10 +85,23 @@ pip install pywin32>=305
 
 echo.
 echo ==========================================
+echo  Verifying installation...
+echo ==========================================
+echo.
+python -c "from PyQt6.QtWidgets import QApplication; print('[OK] PyQt6')" 2>nul || echo [FAIL] PyQt6
+python -c "import pyesedb; print('[OK] libesedb-python')" 2>nul || echo [WARN] libesedb-python - not installed
+python -c "from dissect.esedb import EseDB; print('[OK] dissect.esedb')" 2>nul || echo [FAIL] dissect.esedb
+python -c "import dateutil; print('[OK] python-dateutil')" 2>nul || echo [FAIL] python-dateutil
+
+echo.
+echo ==========================================
 echo  Installation complete!
 echo ==========================================
 echo.
 echo To run the application:
 echo   python gui_viewer_v2.py
+echo.
+echo If you see [WARN] for libesedb-python, install Visual C++ Build Tools
+echo and run this script again for full functionality.
 echo.
 pause
