@@ -118,7 +118,8 @@ class EDBExporter:
     """Main class for EDB export operations."""
 
     def __init__(self, edb_path: str, verbose: bool = False):
-        self.edb_path = edb_path
+        # Normalize path for cross-platform compatibility
+        self.edb_path = os.path.normpath(os.path.abspath(edb_path))
         self.verbose = verbose
         self.db = None
         self.tables = {}
