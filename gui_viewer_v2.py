@@ -923,6 +923,27 @@ class MainWindow(QMainWindow):
         self.html_browser_view.setPalette(palette)
         self.content_tabs.addTab(self.html_browser_view, "Body (HTML)")
 
+        # Attachments tab (right after Body HTML for easy access)
+        attach_widget = QWidget()
+        attach_layout = QVBoxLayout(attach_widget)
+        self.attach_list = QListWidget()
+        self.attach_list.itemDoubleClicked.connect(self._on_attachment_double_clicked)
+        attach_layout.addWidget(self.attach_list)
+
+        attach_btn_layout = QHBoxLayout()
+        self.save_attach_btn = QPushButton("Save Selected Attachment")
+        self.save_attach_btn.clicked.connect(self._on_save_attachment)
+        self.save_attach_btn.setEnabled(False)
+        attach_btn_layout.addWidget(self.save_attach_btn)
+
+        self.save_all_attach_btn = QPushButton("Save All Attachments")
+        self.save_all_attach_btn.clicked.connect(self._on_save_all_attachments)
+        self.save_all_attach_btn.setEnabled(False)
+        attach_btn_layout.addWidget(self.save_all_attach_btn)
+        attach_layout.addLayout(attach_btn_layout)
+
+        self.content_tabs.addTab(attach_widget, "Attachments (0)")
+
         # HTML Source tab - shows raw HTML code
         self.html_source_view = QTextEdit()
         self.html_source_view.setReadOnly(True)
@@ -971,27 +992,6 @@ class MainWindow(QMainWindow):
         self.ascii_view.setReadOnly(True)
         self.ascii_view.setFont(QFont("Consolas", 10))
         self.content_tabs.addTab(self.ascii_view, "ASCII Strings")
-
-        # Attachments tab
-        attach_widget = QWidget()
-        attach_layout = QVBoxLayout(attach_widget)
-        self.attach_list = QListWidget()
-        self.attach_list.itemDoubleClicked.connect(self._on_attachment_double_clicked)
-        attach_layout.addWidget(self.attach_list)
-
-        attach_btn_layout = QHBoxLayout()
-        self.save_attach_btn = QPushButton("Save Selected Attachment")
-        self.save_attach_btn.clicked.connect(self._on_save_attachment)
-        self.save_attach_btn.setEnabled(False)
-        attach_btn_layout.addWidget(self.save_attach_btn)
-
-        self.save_all_attach_btn = QPushButton("Save All Attachments")
-        self.save_all_attach_btn.clicked.connect(self._on_save_all_attachments)
-        self.save_all_attach_btn.setEnabled(False)
-        attach_btn_layout.addWidget(self.save_all_attach_btn)
-        attach_layout.addLayout(attach_btn_layout)
-
-        self.content_tabs.addTab(attach_widget, "Attachments (0)")
 
         # All Columns tab
         self.columns_table = QTableWidget()
