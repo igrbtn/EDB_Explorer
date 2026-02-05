@@ -2929,16 +2929,13 @@ a {{ color: #0066cc; }}
 <a href="https://t.me/igrbtn">Telegram: @igrbtn</a>
 </p>
 
-<h3>Support:</h3>
+<h3>Support the project:</h3>
 <p>
-<a href="https://www.buymeacoffee.com/igrbtnv">
-<img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=&slug=igrbtnv&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff" alt="Buy Me A Coffee">
-</a>
+<a href="https://www.buymeacoffee.com/igrbtnv" style="background-color:#FFDD00;color:#000;padding:8px 16px;text-decoration:none;border-radius:5px;font-weight:bold;">Buy me a coffee</a>
 </p>
-<p><a href="https://www.buymeacoffee.com/igrbtnv">buymeacoffee.com/igrbtnv</a></p>
 
 <hr>
-<p><small>Built with Python, PyQt6, and pyesedb</small></p>
+<p><small>Built with Python, PyQt6, pyesedb, and dissect.esedb</small></p>
 """
         msg = QMessageBox(self)
         msg.setWindowTitle("About Exchange EDB Exporter")
