@@ -812,62 +812,76 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
 
-        # File and mailbox selection (minimal compact row)
+        # File and mailbox selection (two rows)
         top_widget = QWidget()
-        top_widget.setFixedHeight(28)
-        top_layout = QHBoxLayout(top_widget)
-        top_layout.setContentsMargins(2, 0, 2, 0)
-        top_layout.setSpacing(3)
+        top_widget.setFixedHeight(54)
+        top_vlayout = QVBoxLayout(top_widget)
+        top_vlayout.setContentsMargins(2, 0, 2, 0)
+        top_vlayout.setSpacing(2)
+
+        # Row 1: DB path, Load, Hidden, About
+        row1_layout = QHBoxLayout()
+        row1_layout.setSpacing(3)
 
         lbl_db = QLabel("DB:")
         lbl_db.setFixedWidth(20)
-        top_layout.addWidget(lbl_db)
+        row1_layout.addWidget(lbl_db)
 
         self.file_path = QLineEdit()
         self.file_path.setReadOnly(True)
         self.file_path.setPlaceholderText("Select EDB...")
         self.file_path.setMaximumWidth(200)
         self.file_path.setFixedHeight(22)
-        top_layout.addWidget(self.file_path)
+        row1_layout.addWidget(self.file_path)
 
         browse_btn = QPushButton("...")
         browse_btn.setFixedSize(24, 22)
         browse_btn.clicked.connect(self._on_browse)
-        top_layout.addWidget(browse_btn)
+        row1_layout.addWidget(browse_btn)
 
         self.load_btn = QPushButton("Load")
         self.load_btn.setFixedSize(40, 22)
         self.load_btn.clicked.connect(self._on_load)
         self.load_btn.setEnabled(False)
-        top_layout.addWidget(self.load_btn)
+        row1_layout.addWidget(self.load_btn)
 
-        lbl_mb = QLabel("MB:")
-        lbl_mb.setFixedWidth(22)
-        top_layout.addWidget(lbl_mb)
-
-        self.mailbox_combo = QComboBox()
-        self.mailbox_combo.setMinimumWidth(140)
-        self.mailbox_combo.setFixedHeight(22)
-        self.mailbox_combo.currentIndexChanged.connect(self._on_mailbox_changed)
-        top_layout.addWidget(self.mailbox_combo)
-
-        self.owner_label = QLabel("")
-        self.owner_label.setStyleSheet("color: #0066cc; font-weight: bold; font-size: 11px;")
-        top_layout.addWidget(self.owner_label)
-
-        top_layout.addStretch()
+        row1_layout.addStretch()
 
         self.show_hidden_cb = QCheckBox("Hidden")
         self.show_hidden_cb.setToolTip("Show hidden/system items")
         self.show_hidden_cb.stateChanged.connect(self._on_show_hidden_changed)
-        top_layout.addWidget(self.show_hidden_cb)
+        row1_layout.addWidget(self.show_hidden_cb)
 
         # About button in top right corner
         self.about_btn = QPushButton("About")
         self.about_btn.setFixedSize(50, 22)
         self.about_btn.clicked.connect(self._on_about)
         self.about_btn.setToolTip("About this application")
-        top_layout.addWidget(self.about_btn)
+        row1_layout.addWidget(self.about_btn)
+
+        top_vlayout.addLayout(row1_layout)
+
+        # Row 2: Mailbox selection
+        row2_layout = QHBoxLayout()
+        row2_layout.setSpacing(3)
+
+        lbl_mb = QLabel("MB:")
+        lbl_mb.setFixedWidth(22)
+        row2_layout.addWidget(lbl_mb)
+
+        self.mailbox_combo = QComboBox()
+        self.mailbox_combo.setMinimumWidth(140)
+        self.mailbox_combo.setFixedHeight(22)
+        self.mailbox_combo.currentIndexChanged.connect(self._on_mailbox_changed)
+        row2_layout.addWidget(self.mailbox_combo)
+
+        self.owner_label = QLabel("")
+        self.owner_label.setStyleSheet("color: #55aaff; font-weight: bold; font-size: 11px;")
+        row2_layout.addWidget(self.owner_label)
+
+        row2_layout.addStretch()
+
+        top_vlayout.addLayout(row2_layout)
 
         layout.addWidget(top_widget)
 
@@ -925,7 +939,7 @@ class MainWindow(QMainWindow):
 
         # Message count label
         self.msg_count_label = QLabel("")
-        self.msg_count_label.setStyleSheet("color: #666;")
+        self.msg_count_label.setStyleSheet("color: #969696;")
         search_layout.addWidget(self.msg_count_label)
 
         middle_layout.addLayout(search_layout)
@@ -994,14 +1008,14 @@ class MainWindow(QMainWindow):
 
         # Message header section (Outlook-style labels above tabs)
         header_widget = QWidget()
-        header_widget.setStyleSheet("QWidget { background-color: #f5f5f5; border-bottom: 1px solid #ddd; }")
+        header_widget.setStyleSheet("QWidget { background-color: #252526; border-bottom: 1px solid #3e3e42; }")
         header_layout = QGridLayout(header_widget)
         header_layout.setContentsMargins(8, 6, 8, 6)
         header_layout.setSpacing(2)
 
         # Create labels with bold field names
-        label_style = "font-weight: bold; color: #444;"
-        value_style = "color: #000;"
+        label_style = "font-weight: bold; color: #969696;"
+        value_style = "color: #d4d4d4;"
 
         # From:
         from_label = QLabel("From:")
@@ -1043,7 +1057,7 @@ class MainWindow(QMainWindow):
         subject_label = QLabel("Subject:")
         subject_label.setStyleSheet(label_style)
         self.header_subject = QLabel("(No Subject)")
-        self.header_subject.setStyleSheet(value_style + " font-weight: bold;")
+        self.header_subject.setStyleSheet(value_style + " font-weight: bold; color: #ffffff;")
         self.header_subject.setWordWrap(True)
         header_layout.addWidget(subject_label, 4, 0)
         header_layout.addWidget(self.header_subject, 4, 1)
@@ -1076,9 +1090,7 @@ class MainWindow(QMainWindow):
         self.html_browser_view.setReadOnly(True)
         self.html_browser_view.setOpenExternalLinks(True)
         self.html_browser_view.setFont(QFont("Arial", 11))
-        palette = self.html_browser_view.palette()
-        palette.setColor(QPalette.ColorRole.Base, QColor(255, 255, 255))
-        self.html_browser_view.setPalette(palette)
+        self.html_browser_view.setStyleSheet("QTextBrowser { background-color: #ffffff; color: #000000; }")
         self.content_tabs.addTab(self.html_browser_view, "Body (HTML)")
 
         # Attachments tab (right after Body HTML for easy access)
@@ -1166,7 +1178,7 @@ class MainWindow(QMainWindow):
         self.export_eml_btn2 = QPushButton("Export Message as EML")
         self.export_eml_btn2.clicked.connect(self._on_export_eml)
         self.export_eml_btn2.setEnabled(False)
-        self.export_eml_btn2.setStyleSheet("QPushButton { padding: 8px 16px; font-weight: bold; }")
+        self.export_eml_btn2.setStyleSheet("QPushButton { padding: 8px 16px; font-weight: bold; background-color: #094771; color: #ffffff; border: 1px solid #007acc; }")
         content_export_layout.addWidget(self.export_eml_btn2)
 
         content_export_layout.addStretch()
@@ -1878,13 +1890,13 @@ class MainWindow(QMainWindow):
             if msg.get('has_error'):
                 item.setText(6, f"[ERROR] {msg['subject']}")
                 for col in range(9):
-                    item.setForeground(col, QColor(200, 0, 0))
+                    item.setForeground(col, QColor(255, 85, 85))
 
             # Mark hidden items visually (gray, lower priority than red)
             elif msg.get('is_hidden'):
                 item.setText(6, f"[HIDDEN] {msg['subject']}")
                 for col in range(9):
-                    item.setForeground(col, Qt.GlobalColor.gray)
+                    item.setForeground(col, QColor(128, 128, 128))
 
             self.message_list.addTopLevelItem(item)
             shown_count += 1
@@ -3328,6 +3340,174 @@ a {{ color: #0066cc; }}
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+
+    # Dark mode palette for cross-platform consistency
+    dark_palette = QPalette()
+    dark_palette.setColor(QPalette.ColorRole.Window, QColor(45, 45, 48))
+    dark_palette.setColor(QPalette.ColorRole.WindowText, QColor(212, 212, 212))
+    dark_palette.setColor(QPalette.ColorRole.Base, QColor(30, 30, 30))
+    dark_palette.setColor(QPalette.ColorRole.AlternateBase, QColor(45, 45, 48))
+    dark_palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(50, 50, 50))
+    dark_palette.setColor(QPalette.ColorRole.ToolTipText, QColor(212, 212, 212))
+    dark_palette.setColor(QPalette.ColorRole.Text, QColor(212, 212, 212))
+    dark_palette.setColor(QPalette.ColorRole.Button, QColor(55, 55, 58))
+    dark_palette.setColor(QPalette.ColorRole.ButtonText, QColor(212, 212, 212))
+    dark_palette.setColor(QPalette.ColorRole.BrightText, QColor(255, 255, 255))
+    dark_palette.setColor(QPalette.ColorRole.Link, QColor(85, 170, 255))
+    dark_palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
+    dark_palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+    dark_palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(128, 128, 128))
+    # Disabled state
+    dark_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(128, 128, 128))
+    dark_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(128, 128, 128))
+    dark_palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(128, 128, 128))
+    app.setPalette(dark_palette)
+
+    # Global stylesheet for consistent dark look
+    app.setStyleSheet("""
+        QMainWindow, QWidget {
+            background-color: #2d2d30;
+            color: #d4d4d4;
+        }
+        QMenuBar {
+            background-color: #2d2d30;
+            color: #d4d4d4;
+        }
+        QMenuBar::item:selected {
+            background-color: #3e3e42;
+        }
+        QMenu {
+            background-color: #2d2d30;
+            color: #d4d4d4;
+            border: 1px solid #3e3e42;
+        }
+        QMenu::item:selected {
+            background-color: #094771;
+        }
+        QTreeWidget, QTableWidget, QListWidget, QTextEdit, QTextBrowser {
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            border: 1px solid #3e3e42;
+            selection-background-color: #094771;
+            selection-color: #ffffff;
+        }
+        QHeaderView::section {
+            background-color: #2d2d30;
+            color: #d4d4d4;
+            border: 1px solid #3e3e42;
+            padding: 4px;
+        }
+        QTabWidget::pane {
+            border: 1px solid #3e3e42;
+            background-color: #1e1e1e;
+        }
+        QTabBar::tab {
+            background-color: #2d2d30;
+            color: #969696;
+            border: 1px solid #3e3e42;
+            padding: 6px 12px;
+            margin-right: 2px;
+        }
+        QTabBar::tab:selected {
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            border-bottom-color: #1e1e1e;
+        }
+        QTabBar::tab:hover {
+            background-color: #3e3e42;
+            color: #d4d4d4;
+        }
+        QPushButton {
+            background-color: #3e3e42;
+            color: #d4d4d4;
+            border: 1px solid #555558;
+            padding: 4px 10px;
+            border-radius: 2px;
+        }
+        QPushButton:hover {
+            background-color: #4e4e52;
+        }
+        QPushButton:pressed {
+            background-color: #094771;
+        }
+        QPushButton:disabled {
+            background-color: #2d2d30;
+            color: #666;
+            border-color: #3e3e42;
+        }
+        QLineEdit, QComboBox {
+            background-color: #3c3c3c;
+            color: #d4d4d4;
+            border: 1px solid #555558;
+            padding: 2px 4px;
+            border-radius: 2px;
+        }
+        QComboBox::drop-down {
+            border-left: 1px solid #555558;
+        }
+        QComboBox QAbstractItemView {
+            background-color: #2d2d30;
+            color: #d4d4d4;
+            selection-background-color: #094771;
+        }
+        QCheckBox {
+            color: #d4d4d4;
+        }
+        QLabel {
+            color: #d4d4d4;
+        }
+        QStatusBar {
+            background-color: #007acc;
+            color: #ffffff;
+        }
+        QProgressBar {
+            background-color: #3c3c3c;
+            border: 1px solid #555558;
+            text-align: center;
+            color: #d4d4d4;
+        }
+        QProgressBar::chunk {
+            background-color: #007acc;
+        }
+        QSplitter::handle {
+            background-color: #3e3e42;
+        }
+        QScrollBar:vertical {
+            background-color: #1e1e1e;
+            width: 12px;
+        }
+        QScrollBar::handle:vertical {
+            background-color: #555558;
+            min-height: 20px;
+            border-radius: 3px;
+        }
+        QScrollBar::handle:vertical:hover {
+            background-color: #6e6e72;
+        }
+        QScrollBar:horizontal {
+            background-color: #1e1e1e;
+            height: 12px;
+        }
+        QScrollBar::handle:horizontal {
+            background-color: #555558;
+            min-width: 20px;
+            border-radius: 3px;
+        }
+        QScrollBar::handle:horizontal:hover {
+            background-color: #6e6e72;
+        }
+        QScrollBar::add-line, QScrollBar::sub-line {
+            height: 0; width: 0;
+        }
+        QMessageBox {
+            background-color: #2d2d30;
+        }
+        QDialog {
+            background-color: #2d2d30;
+            color: #d4d4d4;
+        }
+    """)
+
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
