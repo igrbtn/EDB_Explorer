@@ -740,8 +740,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"Exchange EDB Exporter v{VERSION}")
-        self.setMinimumSize(800, 500)
-        self.resize(1200, 700)  # Default size, can be resized smaller
+        self.setMinimumSize(1000, 500)
+        self.resize(1400, 700)  # Default size, can be resized smaller
 
         self.db = None
         self.tables = {}
@@ -835,12 +835,12 @@ class MainWindow(QMainWindow):
         row1_layout.addWidget(self.file_path)
 
         browse_btn = QPushButton("...")
-        browse_btn.setFixedSize(24, 22)
+        browse_btn.setFixedSize(30, 22)
         browse_btn.clicked.connect(self._on_browse)
         row1_layout.addWidget(browse_btn)
 
         self.load_btn = QPushButton("Load")
-        self.load_btn.setFixedSize(40, 22)
+        self.load_btn.setFixedSize(50, 22)
         self.load_btn.clicked.connect(self._on_load)
         self.load_btn.setEnabled(False)
         row1_layout.addWidget(self.load_btn)
@@ -854,9 +854,10 @@ class MainWindow(QMainWindow):
 
         # About button in top right corner
         self.about_btn = QPushButton("About")
-        self.about_btn.setFixedSize(50, 22)
+        self.about_btn.setFixedSize(70, 22)
         self.about_btn.clicked.connect(self._on_about)
         self.about_btn.setToolTip("About this application")
+        self.about_btn.setStyleSheet("QPushButton { font-weight: bold; background-color: #094771; color: #ffffff; border: 1px solid #007acc; }")
         row1_layout.addWidget(self.about_btn)
 
         top_vlayout.addLayout(row1_layout)
@@ -870,7 +871,8 @@ class MainWindow(QMainWindow):
         row2_layout.addWidget(lbl_mb)
 
         self.mailbox_combo = QComboBox()
-        self.mailbox_combo.setMinimumWidth(140)
+        self.mailbox_combo.setMaximumWidth(200)
+        self.mailbox_combo.setMinimumWidth(200)
         self.mailbox_combo.setFixedHeight(22)
         self.mailbox_combo.currentIndexChanged.connect(self._on_mailbox_changed)
         row2_layout.addWidget(self.mailbox_combo)
@@ -897,6 +899,23 @@ class MainWindow(QMainWindow):
         self.folder_tree.itemSelectionChanged.connect(self._on_folder_selected)
         self.folder_tree.setMinimumWidth(250)
         left_layout.addWidget(self.folder_tree)
+
+        # Export buttons in folder panel
+        left_btn_layout = QHBoxLayout()
+        left_btn_layout.setSpacing(4)
+
+        self.export_folder_btn = QPushButton("Export Folder")
+        self.export_folder_btn.clicked.connect(self._on_export_folder)
+        self.export_folder_btn.setEnabled(False)
+        left_btn_layout.addWidget(self.export_folder_btn)
+
+        self.export_mailbox_btn = QPushButton("Export Mailbox...")
+        self.export_mailbox_btn.clicked.connect(self._on_export_mailbox)
+        self.export_mailbox_btn.setEnabled(False)
+        self.export_mailbox_btn.setToolTip("Export entire mailbox with filters (date, from, to, subject)")
+        left_btn_layout.addWidget(self.export_mailbox_btn)
+
+        left_layout.addLayout(left_btn_layout)
 
         main_splitter.addWidget(left_panel)
 
@@ -968,36 +987,7 @@ class MainWindow(QMainWindow):
         # Store all messages for filtering
         self.all_messages_cache = []
 
-        # Export buttons
-        export_layout = QHBoxLayout()
-        self.export_eml_btn = QPushButton("Export as EML")
-        self.export_eml_btn.clicked.connect(self._on_export_eml)
-        self.export_eml_btn.setEnabled(False)
-        export_layout.addWidget(self.export_eml_btn)
-
-        self.export_attach_btn = QPushButton("Export Attachments")
-        self.export_attach_btn.clicked.connect(self._on_export_attachments)
-        self.export_attach_btn.setEnabled(False)
-        export_layout.addWidget(self.export_attach_btn)
-
-        self.export_folder_btn = QPushButton("Export Folder")
-        self.export_folder_btn.clicked.connect(self._on_export_folder)
-        self.export_folder_btn.setEnabled(False)
-        export_layout.addWidget(self.export_folder_btn)
-
-        self.export_calendar_btn = QPushButton("Export Calendar (.ics)")
-        self.export_calendar_btn.clicked.connect(self._on_export_calendar)
-        self.export_calendar_btn.setEnabled(False)
-        self.export_calendar_btn.setToolTip("Export calendar items from this folder to .ics file")
-        export_layout.addWidget(self.export_calendar_btn)
-
-        self.export_mailbox_btn = QPushButton("Export Mailbox...")
-        self.export_mailbox_btn.clicked.connect(self._on_export_mailbox)
-        self.export_mailbox_btn.setEnabled(False)
-        self.export_mailbox_btn.setToolTip("Export entire mailbox with filters (date, from, to, subject)")
-        export_layout.addWidget(self.export_mailbox_btn)
-
-        middle_layout.addLayout(export_layout)
+        middle_layout.addStretch(0)
 
         main_splitter.addWidget(middle_panel)
 
@@ -1005,6 +995,30 @@ class MainWindow(QMainWindow):
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Export buttons row at top of right panel
+        right_export_layout = QHBoxLayout()
+        right_export_layout.setSpacing(4)
+
+        self.export_eml_btn2 = QPushButton("Export Message as EML")
+        self.export_eml_btn2.clicked.connect(self._on_export_eml)
+        self.export_eml_btn2.setEnabled(False)
+        self.export_eml_btn2.setStyleSheet("QPushButton { padding: 4px 12px; font-weight: bold; background-color: #094771; color: #ffffff; border: 1px solid #007acc; }")
+        right_export_layout.addWidget(self.export_eml_btn2)
+
+        self.export_calendar_btn = QPushButton("Export Calendar (.ics)")
+        self.export_calendar_btn.clicked.connect(self._on_export_calendar)
+        self.export_calendar_btn.setEnabled(False)
+        self.export_calendar_btn.setToolTip("Export calendar items from this folder to .ics file")
+        right_export_layout.addWidget(self.export_calendar_btn)
+
+        self.export_attach_btn = QPushButton("Export Attachments")
+        self.export_attach_btn.clicked.connect(self._on_export_attachments)
+        self.export_attach_btn.setEnabled(False)
+        right_export_layout.addWidget(self.export_attach_btn)
+
+        right_export_layout.addStretch()
+        right_layout.addLayout(right_export_layout)
 
         # Message header section (Outlook-style labels above tabs)
         header_widget = QWidget()
@@ -1172,25 +1186,12 @@ class MainWindow(QMainWindow):
 
         right_layout.addWidget(self.content_tabs)
 
-        # Export buttons row below content tabs
-        content_export_layout = QHBoxLayout()
-
-        self.export_eml_btn2 = QPushButton("Export Message as EML")
-        self.export_eml_btn2.clicked.connect(self._on_export_eml)
-        self.export_eml_btn2.setEnabled(False)
-        self.export_eml_btn2.setStyleSheet("QPushButton { padding: 8px 16px; font-weight: bold; background-color: #094771; color: #ffffff; border: 1px solid #007acc; }")
-        content_export_layout.addWidget(self.export_eml_btn2)
-
-        content_export_layout.addStretch()
-
-        right_layout.addLayout(content_export_layout)
-
         main_splitter.addWidget(right_panel)
         # Set stretch factors to maintain proportions on resize (10%, 30%, 60%)
         main_splitter.setStretchFactor(0, 1)   # Folders 10%
         main_splitter.setStretchFactor(1, 3)   # Messages 30%
         main_splitter.setStretchFactor(2, 6)   # Message 60%
-        main_splitter.setSizes([100, 300, 600])  # Initial sizes
+        main_splitter.setSizes([200, 400, 800])  # Initial sizes
 
         layout.addWidget(main_splitter)
 
@@ -1210,11 +1211,13 @@ class MainWindow(QMainWindow):
             "Exchange Database (*.edb);;All Files (*.*)"
         )
         if path:
-            self.file_path.setText(path)
+            self._full_db_path = path
+            self.file_path.setText(os.path.basename(path))
+            self.file_path.setToolTip(path)
             self.load_btn.setEnabled(True)
 
     def _on_load(self):
-        path = self.file_path.text()
+        path = getattr(self, '_full_db_path', self.file_path.text())
         if not path:
             return
 
@@ -1666,7 +1669,6 @@ class MainWindow(QMainWindow):
         self.all_messages_cache = []
         self.export_folder_btn.setEnabled(False)
         self.export_calendar_btn.setEnabled(False)
-        self.export_eml_btn.setEnabled(False)
         self.export_eml_btn2.setEnabled(False)
         self.export_attach_btn.setEnabled(False)
 
@@ -1946,7 +1948,6 @@ class MainWindow(QMainWindow):
             return
 
         # Enable export button
-        self.export_eml_btn.setEnabled(True)
         self.export_eml_btn2.setEnabled(True)
 
         col_map = {}
@@ -3387,7 +3388,7 @@ def main():
         QTreeWidget, QTableWidget, QListWidget, QTextEdit, QTextBrowser {
             background-color: #1e1e1e;
             color: #d4d4d4;
-            border: 1px solid #3e3e42;
+            border: none;
             selection-background-color: #094771;
             selection-color: #ffffff;
         }
