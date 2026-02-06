@@ -889,13 +889,8 @@ class MainWindow(QMainWindow):
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        self.folder_tree = QTreeWidget()
-        self.folder_tree.setHeaderLabels(["Folder", "Messages"])
-        self.folder_tree.itemSelectionChanged.connect(self._on_folder_selected)
-        self.folder_tree.setMinimumWidth(250)
-        left_layout.addWidget(self.folder_tree)
 
-        # Export buttons in folder panel
+        # Export buttons above folder tree
         left_btn_layout = QHBoxLayout()
         left_btn_layout.setSpacing(4)
 
@@ -911,6 +906,12 @@ class MainWindow(QMainWindow):
         left_btn_layout.addWidget(self.export_mailbox_btn)
 
         left_layout.addLayout(left_btn_layout)
+
+        self.folder_tree = QTreeWidget()
+        self.folder_tree.setHeaderLabels(["Folder", "Messages"])
+        self.folder_tree.itemSelectionChanged.connect(self._on_folder_selected)
+        self.folder_tree.setMinimumWidth(250)
+        left_layout.addWidget(self.folder_tree)
 
         main_splitter.addWidget(left_panel)
 
@@ -951,7 +952,7 @@ class MainWindow(QMainWindow):
 
         # Clear filters button
         self.clear_filters_btn = QPushButton("Clear")
-        self.clear_filters_btn.setMaximumWidth(50)
+        self.clear_filters_btn.setMaximumWidth(70)
         self.clear_filters_btn.clicked.connect(self._on_clear_filters)
         search_layout.addWidget(self.clear_filters_btn)
 
