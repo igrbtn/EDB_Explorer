@@ -847,11 +847,6 @@ class MainWindow(QMainWindow):
 
         row1_layout.addStretch()
 
-        self.show_hidden_cb = QCheckBox("Hidden")
-        self.show_hidden_cb.setToolTip("Show hidden/system items")
-        self.show_hidden_cb.stateChanged.connect(self._on_show_hidden_changed)
-        row1_layout.addWidget(self.show_hidden_cb)
-
         # About button in top right corner
         self.about_btn = QPushButton("About")
         self.about_btn.setFixedSize(70, 22)
@@ -893,7 +888,7 @@ class MainWindow(QMainWindow):
         # Left panel: Folder tree
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 30, 0, 0)  # Top margin to align with message list header
+        left_layout.setContentsMargins(0, 0, 0, 0)
         self.folder_tree = QTreeWidget()
         self.folder_tree.setHeaderLabels(["Folder", "Messages"])
         self.folder_tree.itemSelectionChanged.connect(self._on_folder_selected)
@@ -948,6 +943,12 @@ class MainWindow(QMainWindow):
         self.filter_attach_cb.stateChanged.connect(self._on_filter_changed)
         search_layout.addWidget(self.filter_attach_cb)
 
+        # Filter: Show hidden/system items
+        self.show_hidden_cb = QCheckBox("Hidden")
+        self.show_hidden_cb.setToolTip("Show hidden/system items")
+        self.show_hidden_cb.stateChanged.connect(self._on_show_hidden_changed)
+        search_layout.addWidget(self.show_hidden_cb)
+
         # Clear filters button
         self.clear_filters_btn = QPushButton("Clear")
         self.clear_filters_btn.setMaximumWidth(50)
@@ -986,8 +987,6 @@ class MainWindow(QMainWindow):
 
         # Store all messages for filtering
         self.all_messages_cache = []
-
-        middle_layout.addStretch(0)
 
         main_splitter.addWidget(middle_panel)
 
