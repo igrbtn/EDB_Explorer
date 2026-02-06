@@ -1660,7 +1660,7 @@ class MainWindow(QMainWindow):
                 date_received = get_filetime_value(record, col_map.get('DateReceived', -1))
                 date_str = date_received.strftime("%Y-%m-%d %H:%M") if date_received else ""
 
-                # Use EmailExtractor with headers_only=True for fast, accurate extraction
+                # Full message extraction for accurate From/To/Subject
                 subject = ""
                 from_display = ""
                 to_display = ""
@@ -1673,7 +1673,7 @@ class MainWindow(QMainWindow):
                     try:
                         email_msg = self.email_extractor.extract_message(
                             record, col_map, rec_idx,
-                            headers_only=True  # Skip body/attachments for speed
+                            headers_only=False  # Full decode for accurate data
                         )
                         if email_msg:
                             subject = email_msg.subject or ""
