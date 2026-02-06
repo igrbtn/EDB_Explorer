@@ -567,27 +567,50 @@ class EmailExtractor:
         if msg_class:
             msg.message_class = msg_class
 
-        # Extract from PropertyBlob
+        # Extract subject and message_id from PropertyBlob
         if prop_blob:
-            msg.sender_name = self._extract_sender(prop_blob)
             msg.subject = self._extract_subject(prop_blob)
             msg.message_id = self._extract_message_id(prop_blob)
+
+        # Try to get sender from various columns
+        sender_columns = ['SenderName', 'SenderEmailAddress', 'DisplayFrom',
+                         'OriginalSenderName', 'SenderSmtpAddress']
+        for col_name in sender_columns:
+            if col_name in col_map:
+                val = self._get_string(record, col_map.get(col_name, -1))
+                if val and len(val) > 2:
+                    msg.sender_name = val
+                    break
 
         # Fallback sender to mailbox owner
         if not msg.sender_name and self.mailbox_owner:
             msg.sender_name = self.mailbox_owner
 
         # Build sender email
-        if msg.sender_name:
+        if msg.sender_name and '@' in msg.sender_name:
+            msg.sender_email = msg.sender_name  # Already an email
+            msg.sender_name = msg.sender_name.split('@')[0]  # Extract name part
+        elif msg.sender_name:
             msg.sender_email = f"{msg.sender_name.lower().replace(' ', '')}@lab.sith.uz"
         elif self.mailbox_email:
             msg.sender_email = self.mailbox_email
 
-        # Recipients from DisplayTo
-        display_to = self._get_string(record, col_map.get('DisplayTo', -1))
+        # Try to get recipients from various columns
+        recipient_columns = ['DisplayTo', 'RecipientList', 'ToRecipients', 'DisplayCc']
+        display_to = ""
+        for col_name in recipient_columns:
+            if col_name in col_map:
+                val = self._get_string(record, col_map.get(col_name, -1))
+                if val and len(val) > 2:
+                    display_to = val
+                    break
+
         if display_to:
             msg.to_names = [display_to]
-            msg.to_emails = [f"{display_to.lower().replace(' ', '')}@lab.sith.uz"]
+            if '@' in display_to:
+                msg.to_emails = [display_to]
+            else:
+                msg.to_emails = [f"{display_to.lower().replace(' ', '')}@lab.sith.uz"]
         elif msg.sender_name:
             # Fallback: assume self-addressed
             msg.to_names = [msg.sender_name]
