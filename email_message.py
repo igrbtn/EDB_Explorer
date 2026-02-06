@@ -332,10 +332,59 @@ class EmailExtractor:
         return ""
 
     def _extract_sender(self, blob: bytes) -> str:
-        """Extract sender name - returns empty, relies on mailbox owner fallback."""
-        # PropertyBlob sender extraction is unreliable
-        # Just return empty and let fallback use mailbox owner
+        """Extract sender name - returns empty, relies on body headers or fallback."""
         return ""
+
+    def _parse_rfc822_headers(self, body_text: str) -> dict:
+        """Parse RFC822 headers from message body to get real From/To."""
+        headers = {}
+        if not body_text:
+            return headers
+
+        lines = body_text.split('\n')
+        current_header = None
+        current_value = []
+
+        for line in lines[:50]:  # Only check first 50 lines for headers
+            # Empty line marks end of headers
+            if not line.strip():
+                if current_header:
+                    headers[current_header] = ' '.join(current_value).strip()
+                break
+
+            # Check for header line
+            if ':' in line and not line.startswith(' ') and not line.startswith('\t'):
+                # Save previous header
+                if current_header:
+                    headers[current_header] = ' '.join(current_value).strip()
+
+                parts = line.split(':', 1)
+                current_header = parts[0].strip()
+                current_value = [parts[1].strip()] if len(parts) > 1 else []
+            elif current_header and (line.startswith(' ') or line.startswith('\t')):
+                # Continuation line
+                current_value.append(line.strip())
+
+        return headers
+
+    def _extract_name_from_header(self, header_value: str) -> tuple:
+        """Extract name and email from header like 'Name <email@domain>'."""
+        if not header_value:
+            return "", ""
+
+        import re
+        # Match "Name <email>" pattern
+        match = re.match(r'^([^<]+)\s*<([^>]+)>', header_value)
+        if match:
+            return match.group(1).strip(), match.group(2).strip()
+
+        # Match just email
+        if '@' in header_value:
+            email = header_value.strip()
+            name = email.split('@')[0]
+            return name, email
+
+        return header_value.strip(), ""
 
     def _extract_subject(self, blob: bytes) -> str:
         """
@@ -572,64 +621,55 @@ class EmailExtractor:
             msg.subject = self._extract_subject(prop_blob)
             msg.message_id = self._extract_message_id(prop_blob)
 
-        # Try to get sender from various columns
-        sender_columns = ['SenderName', 'SenderEmailAddress', 'DisplayFrom',
-                         'OriginalSenderName', 'SenderSmtpAddress']
-        for col_name in sender_columns:
-            if col_name in col_map:
-                val = self._get_string(record, col_map.get(col_name, -1))
-                if val and len(val) > 2:
-                    msg.sender_name = val
-                    break
+        # First, try to get body to parse RFC822 headers (most reliable source)
+        native_body = self._get_long_value(record, col_map.get('NativeBody', -1))
+        body_text = ""
+        if native_body:
+            msg.body_html, body_text = self._extract_body(native_body, prop_blob)
+            msg.body_text = body_text
 
-        # Fallback sender to mailbox owner
+        # Parse RFC822 headers from body for real From/To
+        rfc_headers = self._parse_rfc822_headers(body_text or msg.body_html or "")
+
+        # Get From from RFC822 headers
+        if 'From' in rfc_headers:
+            from_name, from_email = self._extract_name_from_header(rfc_headers['From'])
+            if from_name:
+                msg.sender_name = from_name
+            if from_email:
+                msg.sender_email = from_email
+
+        # Get To from RFC822 headers
+        if 'To' in rfc_headers:
+            to_name, to_email = self._extract_name_from_header(rfc_headers['To'])
+            if to_name:
+                msg.to_names = [to_name]
+            if to_email:
+                msg.to_emails = [to_email]
+
+        # Fallback sender to mailbox owner if not found in headers
         if not msg.sender_name and self.mailbox_owner:
             msg.sender_name = self.mailbox_owner
 
-        # Build sender email
-        if msg.sender_name and '@' in msg.sender_name:
-            msg.sender_email = msg.sender_name  # Already an email
-            msg.sender_name = msg.sender_name.split('@')[0]  # Extract name part
-        elif msg.sender_name:
+        # Build sender email if missing
+        if msg.sender_name and not msg.sender_email:
             msg.sender_email = f"{msg.sender_name.lower().replace(' ', '')}@lab.sith.uz"
-        elif self.mailbox_email:
+        elif not msg.sender_email and self.mailbox_email:
             msg.sender_email = self.mailbox_email
 
-        # Try to get recipients from various columns
-        recipient_columns = ['DisplayTo', 'RecipientList', 'ToRecipients', 'DisplayCc']
-        display_to = ""
-        for col_name in recipient_columns:
-            if col_name in col_map:
-                val = self._get_string(record, col_map.get(col_name, -1))
-                if val and len(val) > 2:
-                    display_to = val
-                    break
-
-        if display_to:
-            msg.to_names = [display_to]
-            if '@' in display_to:
-                msg.to_emails = [display_to]
-            else:
-                msg.to_emails = [f"{display_to.lower().replace(' ', '')}@lab.sith.uz"]
-        elif msg.sender_name:
-            # Fallback: assume self-addressed
+        # Fallback recipients to sender if not found
+        if not msg.to_names and msg.sender_name:
             msg.to_names = [msg.sender_name]
+        if not msg.to_emails and msg.sender_email:
             msg.to_emails = [msg.sender_email]
 
-        # Skip body and attachment extraction in headers_only mode (fast mode for list views)
-        if not headers_only:
-            # Body from NativeBody
-            native_body = self._get_long_value(record, col_map.get('NativeBody', -1))
-            if native_body:
-                msg.body_html, msg.body_text = self._extract_body(native_body, prop_blob)
+        # If no body found yet, try PropertyBlob
+        if not msg.body_text and prop_blob:
+            msg.body_text = self._extract_body_from_property_blob(prop_blob)
 
-            # If no body found, try PropertyBlob
-            if not msg.body_text and prop_blob:
-                msg.body_text = self._extract_body_from_property_blob(prop_blob)
-
-            # Load attachments if tables provided
-            if msg.has_attachments and tables and mailbox_num:
-                msg.attachments = self._extract_attachments(record, col_map, tables, mailbox_num)
+        # Load attachments (skip in headers_only mode for speed)
+        if not headers_only and msg.has_attachments and tables and mailbox_num:
+            msg.attachments = self._extract_attachments(record, col_map, tables, mailbox_num)
 
         return msg
 
