@@ -28,6 +28,15 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, List, Dict
 
+# Load version from VERSION file
+def get_version():
+    version_file = Path(__file__).parent / "VERSION"
+    if version_file.exists():
+        return version_file.read_text().strip()
+    return "1.000"
+
+VERSION = get_version()
+
 # Try imports
 try:
     import pyesedb
@@ -797,10 +806,11 @@ def cmd_info(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Exchange EDB Exporter - Command Line Interface",
+        description=f"Exchange EDB Exporter v{VERSION} - Command Line Interface",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument('edb_file', help='Path to EDB database file')
+    parser.add_argument('--version', action='version', version=f'Exchange EDB Exporter v{VERSION}')
+    parser.add_argument('edb_file', nargs='?', help='Path to EDB database file')
     parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
 
     subparsers = parser.add_subparsers(dest='command', help='Commands')

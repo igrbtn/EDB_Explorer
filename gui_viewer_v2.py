@@ -12,6 +12,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from collections import defaultdict
 
+# Load version from VERSION file
+def get_version():
+    version_file = Path(__file__).parent / "VERSION"
+    if version_file.exists():
+        return version_file.read_text().strip()
+    return "1.000"
+
+VERSION = get_version()
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QTreeWidget, QTreeWidgetItem,
@@ -671,7 +680,7 @@ class LoadWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Exchange EDB Content Viewer v2")
+        self.setWindowTitle(f"Exchange EDB Exporter v{VERSION}")
         self.setMinimumSize(800, 500)
         self.resize(1200, 700)  # Default size, can be resized smaller
 
@@ -2977,9 +2986,9 @@ a {{ color: #0066cc; }}
 
     def _on_about(self):
         """Show About dialog with developer information."""
-        about_text = """
+        about_text = f"""
 <h2>Exchange EDB Exporter</h2>
-<p><b>Version:</b> 1.0</p>
+<p><b>Version:</b> {VERSION}</p>
 <p>A tool for viewing and exporting email data from Microsoft Exchange EDB database files.</p>
 
 <h3>Features:</h3>
