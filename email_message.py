@@ -332,43 +332,27 @@ class EmailExtractor:
         return ""
 
     def _extract_sender(self, blob: bytes) -> str:
-        """Extract sender name from PropertyBlob."""
+        """Extract sender name from PropertyBlob - simplified, use mailbox owner as fallback."""
         # Look for Administrator pattern
         if b'Administrator' in blob:
             return 'Administrator'
-        if b'Admin' in blob and b'istrator' in blob[blob.find(b'Admin'):blob.find(b'Admin')+30]:
-            return 'Administrator'
 
-        # Find where subject area starts to limit search
-        # Sender is BEFORE the subject in PropertyBlob
-        search_end = len(blob)
-        for pattern in [b'StoneM', b'toneM', b'oneM', b'atorM', b'Rosetta']:
-            pos = blob.find(pattern)
-            if pos > 50:  # Need some space for sender
-                search_end = pos + 20  # Include a bit after marker
-                break
-
-        # Look for M marker pattern - only search in sender area
-        for i in range(min(search_end, len(blob) - 5)):
+        # Simple M marker search for name-like strings
+        for i in range(len(blob) - 5):
             if blob[i] == 0x4d:  # M marker
                 length = blob[i+1]
-                if 3 <= length <= 40 and i + 2 + length <= len(blob):
+                if 3 <= length <= 30 and i + 2 + length <= len(blob):
                     potential = blob[i+2:i+2+length]
                     if all(32 <= b < 127 for b in potential):
                         text = potential.decode('ascii', errors='ignore')
-                        # Filter out system strings and common non-name patterns
-                        skip = ['exchange', 'recipient', 'labsith', 'fydib', 'pdlt',
-                                'group', 'index', 'subject', 'inbox', 'sent', 'draft',
-                                'calendar', 'contact', 'task', 'note', 'journal',
-                                'ipm.', 'folder', 'deleted', 'junk', 'outbox']
-                        if not any(x in text.lower() for x in skip):
-                            # Validate it looks like a name (First Last pattern or single name)
-                            words = text.split()
-                            if len(words) >= 1 and all(w[0].isupper() for w in words if w):
-                                # Must have letters and look like a name
-                                if any(c.isalpha() for c in text) and len(text) >= 3:
-                                    return text
+                        # Must look like a name (has space between words)
+                        if ' ' in text and any(c.isalpha() for c in text):
+                            # Filter obvious non-names
+                            lower = text.lower()
+                            if not any(x in lower for x in ['exchange', 'labsith', 'fydib', '@', '/', '\\']):
+                                return text
 
+        # No reliable sender found - will use mailbox owner as fallback
         return ""
 
     def _extract_subject(self, blob: bytes) -> str:
@@ -603,14 +587,9 @@ class EmailExtractor:
 
         # Extract from PropertyBlob
         if prop_blob:
-            msg.subject = self._extract_subject(prop_blob)
             msg.sender_name = self._extract_sender(prop_blob)
+            msg.subject = self._extract_subject(prop_blob)
             msg.message_id = self._extract_message_id(prop_blob)
-
-        # Validate sender - if it matches subject, it's wrong
-        if msg.sender_name and msg.subject:
-            if msg.sender_name.lower() == msg.subject.lower():
-                msg.sender_name = ""  # Clear invalid sender
 
         # Fallback sender to mailbox owner
         if not msg.sender_name and self.mailbox_owner:
@@ -624,12 +603,6 @@ class EmailExtractor:
 
         # Recipients from DisplayTo
         display_to = self._get_string(record, col_map.get('DisplayTo', -1))
-
-        # Validate DisplayTo - if it matches subject, it's wrong
-        if display_to and msg.subject:
-            if display_to.lower() == msg.subject.lower():
-                display_to = ""  # Clear invalid recipient
-
         if display_to:
             msg.to_names = [display_to]
             msg.to_emails = [f"{display_to.lower().replace(' ', '')}@lab.sith.uz"]
