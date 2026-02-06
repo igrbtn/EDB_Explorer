@@ -675,6 +675,8 @@ class LoadWorker(QThread):
 
             # Sort mailboxes
             result['mailboxes'].sort(key=lambda x: x['number'])
+            result['file_size'] = os.path.getsize(self.edb_path)
+            result['total_messages'] = sum(mb['message_count'] for mb in result['mailboxes'])
 
             # Try to extract mailbox owner email from Sent Items
             for mb in result['mailboxes']:
@@ -832,6 +834,7 @@ class MainWindow(QMainWindow):
         self.file_path.setPlaceholderText("Select EDB...")
         self.file_path.setMaximumWidth(200)
         self.file_path.setFixedHeight(22)
+        self.file_path.mousePressEvent = lambda e: self._on_browse()
         row1_layout.addWidget(self.file_path)
 
         browse_btn = QPushButton("...")
@@ -844,6 +847,10 @@ class MainWindow(QMainWindow):
         self.load_btn.clicked.connect(self._on_load)
         self.load_btn.setEnabled(False)
         row1_layout.addWidget(self.load_btn)
+
+        self.db_info_label = QLabel("")
+        self.db_info_label.setStyleSheet("color: #969696; font-size: 11px;")
+        row1_layout.addWidget(self.db_info_label)
 
         row1_layout.addStretch()
 
@@ -866,8 +873,8 @@ class MainWindow(QMainWindow):
         row2_layout.addWidget(lbl_mb)
 
         self.mailbox_combo = QComboBox()
-        self.mailbox_combo.setMaximumWidth(200)
-        self.mailbox_combo.setMinimumWidth(200)
+        self.mailbox_combo.setMaximumWidth(284)
+        self.mailbox_combo.setMinimumWidth(284)
         self.mailbox_combo.setFixedHeight(22)
         self.mailbox_combo.currentIndexChanged.connect(self._on_mailbox_changed)
         row2_layout.addWidget(self.mailbox_combo)
@@ -1213,6 +1220,7 @@ class MainWindow(QMainWindow):
         if path:
             self._full_db_path = path
             self.file_path.setText(os.path.basename(path))
+            self.file_path.setCursorPosition(0)
             self.file_path.setToolTip(path)
             self.load_btn.setEnabled(True)
 
@@ -1241,18 +1249,36 @@ class MainWindow(QMainWindow):
         # Clear folder cache when loading new database
         self.folder_messages_cache.clear()
 
-        # Populate mailbox combo
+        # Populate mailbox combo without auto-selecting
+        self.mailbox_combo.blockSignals(True)
         self.mailbox_combo.clear()
+        self.mailbox_combo.addItem("-- Select Mailbox --", None)
         for mb in result['mailboxes']:
             owner = mb.get('owner_email', '')
             if owner:
-                # Show owner name without email
                 label = f"{owner} ({mb['message_count']} msgs)"
             else:
                 label = f"Mailbox {mb['number']} ({mb['message_count']} msgs)"
             self.mailbox_combo.addItem(label, mb['number'])
+        self.mailbox_combo.setCurrentIndex(0)
+        self.mailbox_combo.blockSignals(False)
 
-        self.status.showMessage(f"Loaded {len(self.tables)} tables, {len(result['mailboxes'])} mailboxes")
+        # Display database statistics
+        file_size = result.get('file_size', 0)
+        if file_size >= 1024 * 1024 * 1024:
+            size_str = f"{file_size / (1024**3):.1f} GB"
+        elif file_size >= 1024 * 1024:
+            size_str = f"{file_size / (1024**2):.1f} MB"
+        elif file_size >= 1024:
+            size_str = f"{file_size / 1024:.1f} KB"
+        else:
+            size_str = f"{file_size} B"
+        total_msgs = result.get('total_messages', 0)
+        mb_count = len(result['mailboxes'])
+        tbl_count = len(self.tables)
+        self.db_info_label.setText(f"{size_str} | {mb_count} mailboxes | {total_msgs} messages | {tbl_count} tables")
+
+        self.status.showMessage(f"Loaded {tbl_count} tables, {mb_count} mailboxes")
 
     def _on_load_error(self, error):
         self.progress.setVisible(False)
@@ -1264,6 +1290,8 @@ class MainWindow(QMainWindow):
             return
 
         self.current_mailbox = self.mailbox_combo.currentData()
+        if self.current_mailbox is None:
+            return
         self.status.showMessage(f"Selected mailbox {self.current_mailbox}, loading...")
 
         # Clear folder cache when changing mailbox
