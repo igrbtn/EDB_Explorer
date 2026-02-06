@@ -339,20 +339,35 @@ class EmailExtractor:
         if b'Admin' in blob and b'istrator' in blob[blob.find(b'Admin'):blob.find(b'Admin')+30]:
             return 'Administrator'
 
-        # Look for M marker pattern
-        for i in range(len(blob) - 5):
+        # Find where subject area starts to limit search
+        # Sender is BEFORE the subject in PropertyBlob
+        search_end = len(blob)
+        for pattern in [b'StoneM', b'toneM', b'oneM', b'atorM', b'Rosetta']:
+            pos = blob.find(pattern)
+            if pos > 50:  # Need some space for sender
+                search_end = pos + 20  # Include a bit after marker
+                break
+
+        # Look for M marker pattern - only search in sender area
+        for i in range(min(search_end, len(blob) - 5)):
             if blob[i] == 0x4d:  # M marker
                 length = blob[i+1]
-                if 3 <= length <= 50 and i + 2 + length <= len(blob):
+                if 3 <= length <= 40 and i + 2 + length <= len(blob):
                     potential = blob[i+2:i+2+length]
                     if all(32 <= b < 127 for b in potential):
                         text = potential.decode('ascii', errors='ignore')
-                        # Filter out system strings
-                        skip = ['exchange', 'recipient', 'labsith', 'fydib', 'pdlt', 'group', 'index', 'subject']
+                        # Filter out system strings and common non-name patterns
+                        skip = ['exchange', 'recipient', 'labsith', 'fydib', 'pdlt',
+                                'group', 'index', 'subject', 'inbox', 'sent', 'draft',
+                                'calendar', 'contact', 'task', 'note', 'journal',
+                                'ipm.', 'folder', 'deleted', 'junk', 'outbox']
                         if not any(x in text.lower() for x in skip):
-                            # Validate it looks like a name
-                            if any(c.isalpha() for c in text) and len(text) >= 3:
-                                return text
+                            # Validate it looks like a name (First Last pattern or single name)
+                            words = text.split()
+                            if len(words) >= 1 and all(w[0].isupper() for w in words if w):
+                                # Must have letters and look like a name
+                                if any(c.isalpha() for c in text) and len(text) >= 3:
+                                    return text
 
         return ""
 
