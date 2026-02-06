@@ -332,8 +332,175 @@ class EmailExtractor:
         return ""
 
     def _extract_sender(self, blob: bytes) -> str:
-        """Extract sender name - returns empty, relies on body headers or fallback."""
+        """
+        Extract sender name from PropertyBlob using M marker pattern.
+
+        PropertyBlob structure contains:
+        - M + length_byte + sender_name (e.g., M\x0d + "Rosetta Stone")
+        - The sender name is typically at a fixed offset after decompression
+        """
+        if not blob or len(blob) < 50:
+            return ""
+
+        # Try to decompress blob first
+        try:
+            from dissect.esedb.compression import decompress as dissect_decompress
+            blob = dissect_decompress(blob)
+        except:
+            pass
+
+        # Search for M marker pattern with name-like content
+        # Look for M + length (5-30) + ASCII text that looks like a name
+        for i in range(len(blob) - 10):
+            if blob[i] == ord('M') and 5 <= blob[i+1] <= 40:
+                length = blob[i+1]
+                if i + 2 + length > len(blob):
+                    continue
+
+                text_data = blob[i+2:i+2+length]
+
+                # Check if this looks like a name (mostly letters and spaces)
+                if not text_data:
+                    continue
+
+                # Skip if it looks like email (has @) - we want name, not email
+                if b'@' in text_data:
+                    continue
+
+                # Skip if it looks like Message-ID
+                if text_data.startswith(b'<'):
+                    continue
+
+                # Skip folder/system names
+                skip_patterns = [b'Junk', b'Inbox', b'Sent', b'Deleted', b'Drafts',
+                                b'Microsoft', b'Exchange', b'System', b'Recovery',
+                                b'Calendar', b'Contacts', b'Tasks', b'/O=', b'/OU=',
+                                b'CN=', b'Rule', b'http', b'schema']
+                if any(p in text_data for p in skip_patterns):
+                    continue
+
+                # Check if mostly ASCII letters and spaces
+                printable = sum(1 for b in text_data if (65 <= b <= 90) or (97 <= b <= 122) or b == 32)
+                if printable >= length * 0.7:
+                    try:
+                        name = text_data.decode('ascii', errors='ignore').strip()
+                        # Must have at least one space (First Last name pattern) or be a single word
+                        if name and (len(name) >= 3):
+                            # Validate it looks like a name
+                            if all(c.isalpha() or c.isspace() for c in name):
+                                return name
+                    except:
+                        pass
+
         return ""
+
+    def _extract_sender_email(self, blob: bytes) -> str:
+        """
+        Extract sender email from PropertyBlob using M marker pattern.
+
+        Looks for M + length + email@domain pattern.
+        """
+        if not blob or len(blob) < 50:
+            return ""
+
+        # Try to decompress blob first
+        try:
+            from dissect.esedb.compression import decompress as dissect_decompress
+            blob = dissect_decompress(blob)
+        except:
+            pass
+
+        # Search for M marker pattern with email content
+        for i in range(len(blob) - 10):
+            if blob[i] == ord('M') and 10 <= blob[i+1] <= 60:
+                length = blob[i+1]
+                if i + 2 + length > len(blob):
+                    continue
+
+                text_data = blob[i+2:i+2+length]
+
+                # Check if this looks like an email (has @)
+                if b'@' not in text_data:
+                    continue
+
+                # Skip Message-ID
+                if text_data.startswith(b'<'):
+                    continue
+
+                try:
+                    email = text_data.decode('ascii', errors='ignore').strip()
+                    # Validate email format
+                    if '@' in email and '.' in email.split('@')[1]:
+                        # Clean up any trailing garbage
+                        if email.endswith('audit'):
+                            email = email[:-5]
+                        return email
+                except:
+                    pass
+
+        return ""
+
+    def _extract_recipient_from_display_to(self, display_to: bytes) -> str:
+        """
+        Extract recipient name from DisplayTo column.
+
+        DisplayTo is often compressed with LZXPRESS, then UTF-16 LE encoded.
+        """
+        if not display_to or len(display_to) < 4:
+            return ""
+
+        text = ""
+
+        # Try to decompress
+        try:
+            from dissect.esedb.compression import decompress as dissect_decompress
+            decompressed = dissect_decompress(display_to)
+            # Decode as UTF-16 LE
+            text = decompressed.decode('utf-16-le', errors='ignore').rstrip('\x00')
+        except:
+            pass
+
+        # Try direct UTF-16 decode if decompress failed
+        if not text:
+            try:
+                if len(display_to) >= 2 and display_to[1] == 0:
+                    text = display_to.decode('utf-16-le', errors='ignore').rstrip('\x00')
+            except:
+                pass
+
+        if not text:
+            return ""
+
+        # Clean up the extracted text
+        # Remove 'audit' suffix
+        if text.endswith('audit'):
+            text = text[:-5]
+
+        # Handle LDAP paths like "lab.sith.uz/ADPortal/Users/Name"
+        if '/' in text:
+            parts = text.split('/')
+            for part in reversed(parts):
+                # Skip audit suffixes
+                if part.endswith('audit'):
+                    part = part[:-5]
+                # Skip empty parts
+                if not part:
+                    continue
+                # Skip domain parts (have dots but no spaces, like lab.sith.uz)
+                if '.' in part and ' ' not in part:
+                    continue
+                # Skip AD-specific parts
+                if part.startswith('AD') or part.startswith('OU=') or part.startswith('CN='):
+                    continue
+                # Found a valid name
+                if part:
+                    return part.strip()
+
+        # If it's just a domain name (has dots, no spaces), return empty
+        if '.' in text and ' ' not in text:
+            return ""
+
+        return text.strip()
 
     def _parse_rfc822_headers(self, body_text: str) -> dict:
         """Parse RFC822 headers from message body to get real From/To."""
@@ -621,33 +788,28 @@ class EmailExtractor:
             msg.subject = self._extract_subject(prop_blob)
             msg.message_id = self._extract_message_id(prop_blob)
 
-        # First, try to get body to parse RFC822 headers (most reliable source)
+            # Extract sender from PropertyBlob using M marker pattern
+            msg.sender_name = self._extract_sender(prop_blob)
+            msg.sender_email = self._extract_sender_email(prop_blob)
+
+        # Extract recipient from DisplayTo column
+        display_to = self._get_bytes(record, col_map.get('DisplayTo', -1))
+        if display_to:
+            recipient_name = self._extract_recipient_from_display_to(display_to)
+            if recipient_name:
+                msg.to_names = [recipient_name]
+                # Generate email from name
+                clean_name = recipient_name.lower().replace(' ', '')
+                msg.to_emails = [f"{clean_name}@lab.sith.uz"]
+
+        # Get body content (skip if headers_only for performance)
         native_body = self._get_long_value(record, col_map.get('NativeBody', -1))
         body_text = ""
         if native_body:
             msg.body_html, body_text = self._extract_body(native_body, prop_blob)
             msg.body_text = body_text
 
-        # Parse RFC822 headers from body for real From/To
-        rfc_headers = self._parse_rfc822_headers(body_text or msg.body_html or "")
-
-        # Get From from RFC822 headers
-        if 'From' in rfc_headers:
-            from_name, from_email = self._extract_name_from_header(rfc_headers['From'])
-            if from_name:
-                msg.sender_name = from_name
-            if from_email:
-                msg.sender_email = from_email
-
-        # Get To from RFC822 headers
-        if 'To' in rfc_headers:
-            to_name, to_email = self._extract_name_from_header(rfc_headers['To'])
-            if to_name:
-                msg.to_names = [to_name]
-            if to_email:
-                msg.to_emails = [to_email]
-
-        # Fallback sender to mailbox owner if not found in headers
+        # Fallback sender to mailbox owner if not found in PropertyBlob
         if not msg.sender_name and self.mailbox_owner:
             msg.sender_name = self.mailbox_owner
 
@@ -657,11 +819,8 @@ class EmailExtractor:
         elif not msg.sender_email and self.mailbox_email:
             msg.sender_email = self.mailbox_email
 
-        # Fallback recipients to sender if not found
-        if not msg.to_names and msg.sender_name:
-            msg.to_names = [msg.sender_name]
-        if not msg.to_emails and msg.sender_email:
-            msg.to_emails = [msg.sender_email]
+        # DO NOT fall back recipients to sender - leave empty if not found
+        # This prevents showing same value for From and To
 
         # If no body found yet, try PropertyBlob
         if not msg.body_text and prop_blob:
