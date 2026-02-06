@@ -686,6 +686,7 @@ class MainWindow(QMainWindow):
         self.current_email_message = None  # EmailMessage object for stable export
         self.email_extractor = None  # EmailExtractor instance
         self.calendar_extractor = None  # CalendarExtractor instance
+        self.folder_messages_cache = {}  # Cache: folder_id -> list of message data
 
         self._setup_ui()
         self._setup_menu()
@@ -822,7 +823,7 @@ class MainWindow(QMainWindow):
 
         # Filter: Read status
         self.filter_read_combo = QComboBox()
-        self.filter_read_combo.addItems(["All", "Unread", "Read"])
+        self.filter_read_combo.addItems(["All", "Unread", "Read", "Failed"])
         self.filter_read_combo.setMaximumWidth(80)
         self.filter_read_combo.currentIndexChanged.connect(self._on_filter_changed)
         search_layout.addWidget(QLabel("Status:"))
@@ -1063,6 +1064,9 @@ class MainWindow(QMainWindow):
         self.db = result['db']
         self.tables = result['tables']
 
+        # Clear folder cache when loading new database
+        self.folder_messages_cache.clear()
+
         # Populate mailbox combo
         self.mailbox_combo.clear()
         for mb in result['mailboxes']:
@@ -1087,6 +1091,9 @@ class MainWindow(QMainWindow):
 
         self.current_mailbox = self.mailbox_combo.currentData()
         self.status.showMessage(f"Selected mailbox {self.current_mailbox}, loading...")
+
+        # Clear folder cache when changing mailbox
+        self.folder_messages_cache.clear()
 
         try:
             self._load_folders()
@@ -1469,7 +1476,7 @@ class MainWindow(QMainWindow):
                 pass
 
     def _on_folder_selected(self):
-        """Handle folder selection - load and cache all messages."""
+        """Handle folder selection - load and cache all messages with optimizations."""
         self.message_list.clear()
         self.all_messages_cache = []
         self.export_folder_btn.setEnabled(False)
@@ -1484,6 +1491,7 @@ class MainWindow(QMainWindow):
             return
 
         folder_id = items[0].data(0, Qt.ItemDataRole.UserRole)
+        self.current_folder_id = folder_id
         self.export_folder_btn.setEnabled(True)
         self.export_calendar_btn.setEnabled(HAS_CALENDAR_MODULE)
         message_indices = self.messages_by_folder.get(folder_id, [])
@@ -1493,6 +1501,23 @@ class MainWindow(QMainWindow):
             self.msg_count_label.setText("0 messages")
             return
 
+        # Check folder cache first
+        cache_key = (self.current_mailbox, folder_id)
+        if cache_key in self.folder_messages_cache:
+            self.all_messages_cache = self.folder_messages_cache[cache_key]
+            self._apply_filters()
+            total = len(self.all_messages_cache)
+            hidden_count = sum(1 for m in self.all_messages_cache if m.get('is_hidden'))
+            failed_count = sum(1 for m in self.all_messages_cache if m.get('has_error'))
+            status_parts = [f"{total} messages"]
+            if hidden_count:
+                status_parts.append(f"{hidden_count} hidden")
+            if failed_count:
+                status_parts.append(f"{failed_count} failed")
+            self.msg_count_label.setText(" | ".join(status_parts))
+            self.status.showMessage(f"Loaded from cache")
+            return
+
         msg_table_name = f"Message_{self.current_mailbox}"
         msg_table = self.tables.get(msg_table_name)
 
@@ -1500,56 +1525,80 @@ class MainWindow(QMainWindow):
             return
 
         col_map = get_column_map(msg_table)
-        show_hidden = self.show_hidden_cb.isChecked()
 
-        # Load ALL messages into cache (limit to 1000)
+        # Show progress bar
+        total_msgs = min(len(message_indices), 2000)
+        self.progress.setVisible(True)
+        self.progress.setRange(0, total_msgs)
+        self.status.showMessage(f"Loading {total_msgs} messages...")
+
+        # Load messages with lightweight extraction (no full body decode)
         hidden_count = 0
-        for rec_idx in message_indices[:1000]:
-            record = msg_table.get_record(rec_idx)
-            if not record:
-                continue
+        failed_count = 0
+        for i, rec_idx in enumerate(message_indices[:2000]):
+            # Update progress every 50 messages
+            if i % 50 == 0:
+                self.progress.setValue(i)
+                QApplication.processEvents()
 
-            # Check IsHidden flag
-            is_hidden = get_bytes_value(record, col_map.get('IsHidden', -1))
-            is_hidden_val = bool(is_hidden and is_hidden != b'\x00')
-
-            if is_hidden_val:
-                hidden_count += 1
-                if not show_hidden:
+            has_error = False
+            try:
+                record = msg_table.get_record(rec_idx)
+                if not record:
                     continue
 
-            # Get date
-            date_received = get_filetime_value(record, col_map.get('DateReceived', -1))
-            date_str = date_received.strftime("%Y-%m-%d %H:%M") if date_received else ""
+                # Check IsHidden flag
+                is_hidden = get_bytes_value(record, col_map.get('IsHidden', -1))
+                is_hidden_val = bool(is_hidden and is_hidden != b'\x00')
 
-            # Extract message data using EmailMessage for proper decryption
-            from_display = ""
-            to_display = ""
-            subject = ""
+                if is_hidden_val:
+                    hidden_count += 1
 
-            # Use EmailExtractor - same logic as message details view
-            if HAS_EMAIL_MODULE and self.email_extractor:
-                email_msg = self.email_extractor.extract_message(
-                    record, col_map, rec_idx,
-                    tables=self.tables, mailbox_num=self.current_mailbox
-                )
-                if email_msg:
-                    from_display = email_msg.get_from_header()
-                    to_display = email_msg.get_to_header()
-                    subject = email_msg.subject
+                # Get date (fast - just struct unpack)
+                date_received = get_filetime_value(record, col_map.get('DateReceived', -1))
+                date_str = date_received.strftime("%Y-%m-%d %H:%M") if date_received else ""
 
-            # Final fallback for from/to if still empty
-            if not from_display and hasattr(self, 'mailbox_owner') and self.mailbox_owner:
-                from_display = f"{self.mailbox_owner} <{self.mailbox_owner.lower().replace(' ', '')}@lab.sith.uz>"
-            if not to_display and hasattr(self, 'mailbox_owner') and self.mailbox_owner:
-                to_display = f"{self.mailbox_owner} <{self.mailbox_owner.lower().replace(' ', '')}@lab.sith.uz>"
+                # Get flags (fast - just byte check)
+                is_read_raw = get_bytes_value(record, col_map.get('IsRead', -1))
+                is_read = bool(is_read_raw and is_read_raw != b'\x00')
 
-            # Get flags
-            is_read_raw = get_bytes_value(record, col_map.get('IsRead', -1))
-            is_read = bool(is_read_raw and is_read_raw != b'\x00')
+                has_attach_raw = get_bytes_value(record, col_map.get('HasAttachments', -1))
+                has_attach = bool(has_attach_raw and has_attach_raw != b'\x00')
 
-            has_attach_raw = get_bytes_value(record, col_map.get('HasAttachments', -1))
-            has_attach = bool(has_attach_raw and has_attach_raw != b'\x00')
+                # Extract basic fields from PropertyBlob (lightweight - no body decode)
+                prop_blob = get_bytes_value(record, col_map.get('PropertyBlob', -1))
+                subject = ""
+                from_display = ""
+                to_display = ""
+
+                if prop_blob:
+                    try:
+                        subject = extract_subject_from_blob(prop_blob) or ""
+                        from_display = extract_sender_from_blob(prop_blob) or ""
+                        # Use sender as recipient fallback for list display
+                        to_display = from_display
+                    except Exception:
+                        has_error = True
+
+                # Fallback for empty fields
+                if not from_display and hasattr(self, 'mailbox_owner') and self.mailbox_owner:
+                    from_display = self.mailbox_owner
+                if not to_display and hasattr(self, 'mailbox_owner') and self.mailbox_owner:
+                    to_display = self.mailbox_owner
+
+            except Exception as e:
+                has_error = True
+                date_str = ""
+                date_received = None
+                from_display = "[Error]"
+                to_display = "[Error]"
+                subject = f"[Failed to decode record {rec_idx}]"
+                is_read = False
+                has_attach = False
+                is_hidden_val = False
+
+            if has_error:
+                failed_count += 1
 
             # Cache message data
             msg_data = {
@@ -1562,25 +1611,42 @@ class MainWindow(QMainWindow):
                 'is_read': is_read,
                 'has_attach': has_attach,
                 'is_hidden': is_hidden_val,
+                'has_error': has_error,
             }
             self.all_messages_cache.append(msg_data)
+
+        # Store in folder cache
+        self.folder_messages_cache[cache_key] = self.all_messages_cache
+
+        # Hide progress bar
+        self.progress.setVisible(False)
 
         # Apply filters and display
         self._apply_filters()
 
         total = len(self.all_messages_cache)
-        self.msg_count_label.setText(f"{total} messages" + (f" ({hidden_count} hidden)" if hidden_count else ""))
+        status_parts = [f"{total} messages"]
+        if hidden_count:
+            status_parts.append(f"{hidden_count} hidden")
+        if failed_count:
+            status_parts.append(f"{failed_count} failed")
+        self.msg_count_label.setText(" | ".join(status_parts))
 
     def _apply_filters(self):
         """Apply search and filter criteria to cached messages."""
         self.message_list.clear()
 
         search_text = self.search_input.text().lower().strip()
-        read_filter = self.filter_read_combo.currentIndex()  # 0=All, 1=Unread, 2=Read
+        read_filter = self.filter_read_combo.currentIndex()  # 0=All, 1=Unread, 2=Read, 3=Failed
         attach_filter = self.filter_attach_cb.isChecked()
+        show_hidden = self.show_hidden_cb.isChecked()
 
         shown_count = 0
         for msg in self.all_messages_cache:
+            # Apply hidden filter
+            if msg.get('is_hidden') and not show_hidden:
+                continue
+
             # Apply search filter
             if search_text:
                 searchable = f"{msg['subject']} {msg['from']} {msg['to']}".lower()
@@ -1591,6 +1657,8 @@ class MainWindow(QMainWindow):
             if read_filter == 1 and msg['is_read']:  # Unread only
                 continue
             if read_filter == 2 and not msg['is_read']:  # Read only
+                continue
+            if read_filter == 3 and not msg.get('has_error'):  # Failed only
                 continue
 
             # Apply attachment filter
@@ -1608,8 +1676,21 @@ class MainWindow(QMainWindow):
             item.setText(5, "📎" if msg['has_attach'] else "")
             item.setText(6, "✓" if msg['is_read'] else "")
 
-            # Mark hidden items visually
-            if msg['is_hidden']:
+            # Mark unread messages as bold
+            if not msg['is_read']:
+                font = item.font(0)
+                font.setBold(True)
+                for col in range(7):
+                    item.setFont(col, font)
+
+            # Mark failed/error messages in red
+            if msg.get('has_error'):
+                item.setText(4, f"[ERROR] {msg['subject']}")
+                for col in range(7):
+                    item.setForeground(col, QColor(200, 0, 0))
+
+            # Mark hidden items visually (gray, lower priority than red)
+            elif msg.get('is_hidden'):
                 item.setText(4, f"[HIDDEN] {msg['subject']}")
                 for col in range(7):
                     item.setForeground(col, Qt.GlobalColor.gray)
@@ -2029,9 +2110,9 @@ a {{ color: #0066cc; }}
         return '\n'.join(lines)
 
     def _on_show_hidden_changed(self, state):
-        """Toggle showing hidden items."""
-        if self.current_mailbox:
-            self._on_folder_selected()
+        """Toggle showing hidden items - just re-apply filters, don't reload."""
+        if self.all_messages_cache:
+            self._apply_filters()
 
     def _on_raw_toggle_changed(self, state):
         """Toggle between compressed and decompressed raw body view."""
