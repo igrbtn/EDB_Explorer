@@ -1176,7 +1176,11 @@ class MainWindow(QMainWindow):
         right_layout.addLayout(content_export_layout)
 
         main_splitter.addWidget(right_panel)
-        main_splitter.setSizes([100, 300, 600])  # Folders 10%, Messages 30%, Message 60%
+        # Set stretch factors to maintain proportions on resize (10%, 30%, 60%)
+        main_splitter.setStretchFactor(0, 1)   # Folders 10%
+        main_splitter.setStretchFactor(1, 3)   # Messages 30%
+        main_splitter.setStretchFactor(2, 6)   # Message 60%
+        main_splitter.setSizes([100, 300, 600])  # Initial sizes
 
         layout.addWidget(main_splitter)
 
