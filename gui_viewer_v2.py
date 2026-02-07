@@ -8,9 +8,46 @@ import sys
 import os
 import struct
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from collections import defaultdict
+
+
+class Profiler:
+    """Simple profiler that tracks timing of named operations."""
+    def __init__(self):
+        self._starts = {}
+        self._stats = {}  # name -> {'count': int, 'total': float, 'last': float}
+
+    def start(self, name):
+        self._starts[name] = time.perf_counter()
+
+    def stop(self, name):
+        if name not in self._starts:
+            return
+        elapsed = time.perf_counter() - self._starts.pop(name)
+        if name not in self._stats:
+            self._stats[name] = {'count': 0, 'total': 0.0, 'last': 0.0}
+        self._stats[name]['count'] += 1
+        self._stats[name]['total'] += elapsed
+        self._stats[name]['last'] = elapsed
+
+    def get_stats(self):
+        """Return list of (name, count, total_s, avg_ms, last_ms) sorted by total desc."""
+        result = []
+        for name, s in self._stats.items():
+            avg_ms = (s['total'] / s['count'] * 1000) if s['count'] > 0 else 0
+            result.append((name, s['count'], s['total'], avg_ms, s['last'] * 1000))
+        result.sort(key=lambda x: x[2], reverse=True)
+        return result
+
+    def clear(self):
+        self._starts.clear()
+        self._stats.clear()
+
+
+profiler = Profiler()
 
 # Load version from VERSION file
 def get_version():
@@ -644,6 +681,7 @@ class LoadWorker(QThread):
     def run(self):
         try:
             import pyesedb
+            profiler.start("DB Open")
 
             self.progress.emit("Opening database (this may take 20-30 seconds)...")
             db = pyesedb.file()
@@ -682,13 +720,16 @@ class LoadWorker(QThread):
             for mb in result['mailboxes']:
                 mb['owner_email'] = self._get_mailbox_owner(result['tables'], mb['number'])
 
+            profiler.stop("DB Open")
             self.finished.emit(result)
 
         except Exception as e:
+            profiler.stop("DB Open")
             self.error.emit(str(e))
 
     def _get_mailbox_owner(self, tables, mailbox_num):
         """Get mailbox owner from Mailbox table."""
+        profiler.start("Get Mailbox Owner")
         try:
             mailbox_table = tables.get('Mailbox')
             if not mailbox_table:
@@ -725,6 +766,7 @@ class LoadWorker(QThread):
                                     try:
                                         text = decompressed.decode(enc).rstrip('\x00')
                                         if text:
+                                            profiler.stop("Get Mailbox Owner")
                                             return text
                                     except:
                                         pass
@@ -733,9 +775,73 @@ class LoadWorker(QThread):
                 except:
                     pass
 
+            profiler.stop("Get Mailbox Owner")
             return None
         except:
+            profiler.stop("Get Mailbox Owner")
             return None
+
+
+class ProfilerDialog(QDialog):
+    """Floating profiler window showing operation timing stats."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Profiler")
+        self.setMinimumSize(500, 300)
+        self.resize(600, 400)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.Tool)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Operation", "Calls", "Total (s)", "Avg (ms)", "Last (ms)"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSortingEnabled(True)
+        layout.addWidget(self.table)
+
+        btn_layout = QHBoxLayout()
+        clear_btn = QPushButton("Clear")
+        clear_btn.clicked.connect(self._on_clear)
+        btn_layout.addWidget(clear_btn)
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
+
+        from PyQt6.QtCore import QTimer
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refresh)
+        self.timer.start(2000)
+
+    def refresh(self):
+        stats = profiler.get_stats()
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(len(stats))
+        for row, (name, count, total, avg_ms, last_ms) in enumerate(stats):
+            self.table.setItem(row, 0, QTableWidgetItem(name))
+            item_count = QTableWidgetItem()
+            item_count.setData(Qt.ItemDataRole.DisplayRole, count)
+            self.table.setItem(row, 1, item_count)
+            item_total = QTableWidgetItem()
+            item_total.setData(Qt.ItemDataRole.DisplayRole, round(total, 3))
+            self.table.setItem(row, 2, item_total)
+            item_avg = QTableWidgetItem()
+            item_avg.setData(Qt.ItemDataRole.DisplayRole, round(avg_ms, 1))
+            self.table.setItem(row, 3, item_avg)
+            item_last = QTableWidgetItem()
+            item_last.setData(Qt.ItemDataRole.DisplayRole, round(last_ms, 1))
+            self.table.setItem(row, 4, item_last)
+        self.table.setSortingEnabled(True)
+
+    def _on_clear(self):
+        profiler.clear()
+        self.refresh()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refresh()
 
 
 class MainWindow(QMainWindow):
@@ -760,6 +866,8 @@ class MainWindow(QMainWindow):
         self.email_extractor = None  # EmailExtractor instance
         self.calendar_extractor = None  # CalendarExtractor instance
         self.folder_messages_cache = {}  # Cache: folder_id -> list of message data
+        self.debug_mode = False
+        self.profiler_dialog = None
 
         self._setup_ui()
         self._setup_menu()
@@ -1310,6 +1418,7 @@ class MainWindow(QMainWindow):
 
     def _load_folders(self):
         """Load folders by scanning messages and using Folder table metadata."""
+        profiler.start("Load Folders")
         self.folder_tree.clear()
         self.folders = {}
         self.folder_special_map = {}  # Map FolderId -> SpecialFolderNumber
@@ -1652,9 +1761,11 @@ class MainWindow(QMainWindow):
             self.calendar_extractor = CalendarExtractor(self.mailbox_owner, self.mailbox_email)
         else:
             self.calendar_extractor = None
+        profiler.stop("Load Folders")
 
     def _index_messages(self):
         """Index messages by folder with progress indication."""
+        profiler.start("Index Messages")
         self.messages_by_folder.clear()
 
         if not self.current_mailbox:
@@ -1692,10 +1803,12 @@ class MainWindow(QMainWindow):
                 pass
 
         self.progress.setVisible(False)
+        profiler.stop("Index Messages")
         self.status.showMessage(f"Indexed {total_records} messages into {len(self.messages_by_folder)} folders")
 
     def _on_folder_selected(self):
         """Handle folder selection - load and cache all messages with optimizations."""
+        profiler.start("Load Folder Messages")
         self.message_list.clear()
         self.all_messages_cache = []
         self.export_folder_btn.setEnabled(False)
@@ -1865,9 +1978,11 @@ class MainWindow(QMainWindow):
         if failed_count:
             status_parts.append(f"{failed_count} failed")
         self.msg_count_label.setText(" | ".join(status_parts))
+        profiler.stop("Load Folder Messages")
 
     def _apply_filters(self):
         """Apply search and filter criteria to cached messages."""
+        profiler.start("Apply Filters")
         self.message_list.clear()
 
         search_text = self.search_input.text().lower().strip()
@@ -1943,6 +2058,7 @@ class MainWindow(QMainWindow):
             self.status.showMessage(f"Showing {shown_count} of {total} messages (filtered)")
         else:
             self.status.showMessage(f"Showing {shown_count} messages")
+        profiler.stop("Apply Filters")
 
     def _on_search_changed(self, text):
         """Handle search input change."""
@@ -1961,8 +2077,10 @@ class MainWindow(QMainWindow):
 
     def _on_message_selected(self):
         """Handle message selection."""
+        profiler.start("Select Message")
         items = self.message_list.selectedItems()
         if not items:
+            profiler.stop("Select Message")
             return
 
         rec_idx = items[0].data(0, Qt.ItemDataRole.UserRole)
@@ -2230,6 +2348,7 @@ class MainWindow(QMainWindow):
                             # Use LZXPRESS decompression (with dissect.esedb if available)
                             if HAS_LZXPRESS:
                                 try:
+                                    profiler.start("Decompress Body")
                                     body_data_decompressed = decompress_exchange_body(body_data_raw)
                                     if body_data_decompressed and len(body_data_decompressed) > 10:
                                         # Extract text from HTML
@@ -2238,6 +2357,8 @@ class MainWindow(QMainWindow):
                                         html_source = body_data_decompressed.decode('utf-8', errors='replace')
                                 except Exception as e:
                                     pass
+                                finally:
+                                    profiler.stop("Decompress Body")
 
                             # Fallback if decompression didn't work
                             if not body_text and body_data_raw:
@@ -2433,6 +2554,7 @@ a {{ color: #0066cc; }}
                 'attachments': eml_attachments
             }
             self.current_email_message = None
+        profiler.stop("Select Message")
 
     def _hexdump(self, data, width=16):
         lines = []
@@ -2576,6 +2698,7 @@ a {{ color: #0066cc; }}
 
     def _load_attachments(self, rec_idx, record, col_map):
         """Load attachments for the current message."""
+        profiler.start("Load Attachments")
         self.current_attachments = []
         self.attach_list.clear()
         self.export_attach_btn.setEnabled(False)
@@ -2586,6 +2709,7 @@ a {{ color: #0066cc; }}
         has_attach = get_bytes_value(record, col_map.get('HasAttachments', -1))
         if not has_attach or has_attach == b'\x00':
             self.content_tabs.setTabText(2, "Attachments (0)")
+            profiler.stop("Load Attachments")
             return
 
         # Get SubobjectsBlob for attachment linking
@@ -2763,9 +2887,11 @@ a {{ color: #0066cc; }}
             self.export_attach_btn.setEnabled(True)
             self.save_attach_btn.setEnabled(True)
             self.save_all_attach_btn.setEnabled(True)
+        profiler.stop("Load Attachments")
 
     def _on_export_eml(self):
         """Export current message as EML file using stable EmailMessage class."""
+        profiler.start("Export EML")
         # Use new EmailMessage if available
         if HAS_EMAIL_MODULE and self.current_email_message:
             subject_safe = re.sub(r'[<>:"/\\|?*]', '_', self.current_email_message.subject or 'no_subject')[:50]
@@ -2777,6 +2903,7 @@ a {{ color: #0066cc; }}
             )
 
             if not path:
+                profiler.stop("Export EML")
                 return
 
             try:
@@ -2787,11 +2914,13 @@ a {{ color: #0066cc; }}
                 QMessageBox.information(self, "Export", f"Email saved to:\n{path}")
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Failed to export email:\n{e}")
+            profiler.stop("Export EML")
             return
 
         # Fallback to old method
         if not self.current_email_data:
             QMessageBox.warning(self, "Export", "No message selected")
+            profiler.stop("Export EML")
             return
 
         # Generate default filename
@@ -2804,6 +2933,7 @@ a {{ color: #0066cc; }}
         )
 
         if not path:
+            profiler.stop("Export EML")
             return
 
         try:
@@ -2814,6 +2944,7 @@ a {{ color: #0066cc; }}
             QMessageBox.information(self, "Export", f"Email saved to:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Failed to export email:\n{e}")
+        profiler.stop("Export EML")
 
     def _on_export_attachments(self):
         """Export all attachments from current message."""
@@ -2860,9 +2991,11 @@ a {{ color: #0066cc; }}
 
     def _on_export_folder(self):
         """Export all messages in the current folder as EML files."""
+        profiler.start("Export Folder")
         items = self.folder_tree.selectedItems()
         if not items:
             QMessageBox.warning(self, "Export", "No folder selected")
+            profiler.stop("Export Folder")
             return
 
         folder_id = items[0].data(0, Qt.ItemDataRole.UserRole)
@@ -2871,16 +3004,19 @@ a {{ color: #0066cc; }}
 
         if not message_indices:
             QMessageBox.warning(self, "Export", "No messages in this folder")
+            profiler.stop("Export Folder")
             return
 
         output_dir = QFileDialog.getExistingDirectory(self, "Select Export Directory")
         if not output_dir:
+            profiler.stop("Export Folder")
             return
 
         msg_table_name = f"Message_{self.current_mailbox}"
         msg_table = self.tables.get(msg_table_name)
 
         if not msg_table:
+            profiler.stop("Export Folder")
             return
 
         col_map = get_column_map(msg_table)
@@ -2941,16 +3077,20 @@ a {{ color: #0066cc; }}
         self.progress.setVisible(False)
         self.status.showMessage(f"Exported {exported} emails to {output_dir}")
         QMessageBox.information(self, "Export", f"Exported {exported} emails from {folder_name} to:\n{output_dir}")
+        profiler.stop("Export Folder")
 
     def _on_export_calendar(self):
         """Export calendar items from the current folder to .ics file."""
+        profiler.start("Export Calendar")
         if not HAS_CALENDAR_MODULE:
             QMessageBox.warning(self, "Export", "Calendar module not available")
+            profiler.stop("Export Calendar")
             return
 
         items = self.folder_tree.selectedItems()
         if not items:
             QMessageBox.warning(self, "Export", "No folder selected")
+            profiler.stop("Export Calendar")
             return
 
         folder_id = items[0].data(0, Qt.ItemDataRole.UserRole)
@@ -2959,12 +3099,14 @@ a {{ color: #0066cc; }}
 
         if not message_indices:
             QMessageBox.warning(self, "Export", "No messages in this folder")
+            profiler.stop("Export Calendar")
             return
 
         msg_table_name = f"Message_{self.current_mailbox}"
         msg_table = self.tables.get(msg_table_name)
 
         if not msg_table:
+            profiler.stop("Export Calendar")
             return
 
         col_map = get_column_map(msg_table)
@@ -3024,6 +3166,7 @@ a {{ color: #0066cc; }}
                 f"Exported {len(events)} calendar items from '{folder_name}' to:\n{output_path}")
         else:
             QMessageBox.warning(self, "Export Error", "Failed to export calendar items")
+        profiler.stop("Export Calendar")
 
     def _get_folder_path(self, folder_id: str) -> str:
         """Build full folder hierarchy path by traversing parent_id chain.
@@ -3058,8 +3201,10 @@ a {{ color: #0066cc; }}
 
     def _on_export_mailbox(self):
         """Export entire mailbox with filters to folder structure with EML files."""
+        profiler.start("Export Mailbox")
         if not self.current_mailbox:
             QMessageBox.warning(self, "Export", "No mailbox selected")
+            profiler.stop("Export Mailbox")
             return
 
         # Create filter dialog
@@ -3123,6 +3268,7 @@ a {{ color: #0066cc; }}
         layout.addWidget(buttons)
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
+            profiler.stop("Export Mailbox")
             return
 
         # Get filter values
@@ -3255,6 +3401,7 @@ a {{ color: #0066cc; }}
 
         self.status.showMessage(f"Exported {exported} emails to {mailbox_dir}")
         QMessageBox.information(self, "Export Mailbox", summary)
+        profiler.stop("Export Mailbox")
 
     def _on_save_attachment(self):
         """Save selected attachment."""
@@ -3324,7 +3471,12 @@ a {{ color: #0066cc; }}
                 QMessageBox.critical(self, "Save Error", f"Failed to save attachment:\n{e}")
 
     def _on_about(self):
-        """Show About dialog with developer information."""
+        """Show About dialog with developer information and debug toggle."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("About Exchange EDB Exporter")
+        dlg.setMinimumWidth(420)
+        layout = QVBoxLayout(dlg)
+
         about_text = f"""
 <h2>Exchange EDB Exporter</h2>
 <p><b>Version:</b> {VERSION}</p>
@@ -3356,12 +3508,32 @@ a {{ color: #0066cc; }}
 <hr>
 <p><small>Built with Python, PyQt6, pyesedb, and dissect.esedb</small></p>
 """
-        msg = QMessageBox(self)
-        msg.setWindowTitle("About Exchange EDB Exporter")
-        msg.setTextFormat(Qt.TextFormat.RichText)
-        msg.setText(about_text)
-        msg.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-        msg.exec()
+        text_browser = QTextBrowser()
+        text_browser.setHtml(about_text)
+        text_browser.setOpenExternalLinks(True)
+        text_browser.setStyleSheet("QTextBrowser { background-color: #252526; color: #d4d4d4; border: none; }")
+        layout.addWidget(text_browser)
+
+        debug_cb = QCheckBox("Enable Debug Profiler")
+        debug_cb.setChecked(self.debug_mode)
+        def _toggle_debug(checked):
+            self.debug_mode = checked
+            if checked:
+                if not self.profiler_dialog:
+                    self.profiler_dialog = ProfilerDialog(self)
+                self.profiler_dialog.show()
+                self.profiler_dialog.raise_()
+            else:
+                if self.profiler_dialog:
+                    self.profiler_dialog.hide()
+        debug_cb.toggled.connect(_toggle_debug)
+        layout.addWidget(debug_cb)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dlg.accept)
+        layout.addWidget(close_btn)
+
+        dlg.exec()
 
     def closeEvent(self, event):
         if self.db:
