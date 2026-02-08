@@ -3510,7 +3510,9 @@ a {{ color: #0066cc; }}
         self.progress.setVisible(True)
         self.progress.setRange(0, len(message_indices))
 
-        exported = 0
+        exported_eml = 0
+        exported_ics = 0
+        exported_vcf = 0
         for idx, rec_idx in enumerate(message_indices):
             self.progress.setValue(idx + 1)
             QApplication.processEvents()
@@ -3522,50 +3524,89 @@ a {{ color: #0066cc; }}
 
                 prop_blob = get_bytes_value(record, col_map.get('PropertyBlob', -1))
 
+                # Detect message type
+                msg_class = ''
+                if HAS_CALENDAR_MODULE and hasattr(self, 'calendar_extractor') and self.calendar_extractor:
+                    msg_class = self.calendar_extractor.get_message_class(record, col_map)
+                is_cal = (bool(msg_class) and HAS_CALENDAR_MODULE
+                          and self.calendar_extractor.is_calendar_item(msg_class))
+                is_vcf = msg_class.upper().startswith('IPM.CONTACT') if msg_class else False
+
                 subject = extract_subject_from_blob(prop_blob) if prop_blob else ""
-                sender = extract_sender_from_blob(prop_blob) if prop_blob else ""
-                msgid = extract_message_id_from_blob(prop_blob) if prop_blob else ""
-
-                has_attach = get_bytes_value(record, col_map.get('HasAttachments', -1))
-                has_attachments = bool(has_attach and has_attach != b'\x00')
-
                 date_sent = get_filetime_value(record, col_map.get('DateSent', -1))
-
-                # Load attachments for this message
-                attachments = self._load_attachments_for_export(record, col_map)
-
-                email_data = {
-                    'record_index': rec_idx,
-                    'subject': subject,
-                    'sender_name': sender,
-                    'sender_email': f"{sender}@lab.sith.uz" if sender else "unknown@lab.sith.uz",
-                    'recipient_name': sender,
-                    'recipient_email': f"{sender}@lab.sith.uz" if sender else "unknown@lab.sith.uz",
-                    'message_id': msgid,
-                    'date_sent': date_sent,
-                    'folder_name': folder_name,
-                    'has_attachments': has_attachments,
-                    'body_text': subject,
-                    'attachments': attachments
-                }
-
-                # Generate filename
+                date_str = date_sent.strftime("%Y%m%d_%H%M%S") if date_sent else "nodate"
                 subject_safe = re.sub(r'[<>:"/\\|?*]', '_', subject or 'no_subject')[:50]
-                filename = f"record_{rec_idx}_{folder_name.replace(' ', '_')}.eml"
 
-                eml_content = create_eml_content(email_data)
+                if is_cal:
+                    # Export as ICS
+                    cal_event = self.calendar_extractor.extract_event(record, col_map, rec_idx)
+                    if cal_event:
+                        filename = f"{date_str}_{rec_idx}_{subject_safe}.ics"
+                        out_path = Path(output_dir) / filename
+                        with open(out_path, 'w', encoding='utf-8') as f:
+                            f.write(cal_event.to_ics())
+                        exported_ics += 1
+                elif is_vcf:
+                    # Export as VCF
+                    email_msg = None
+                    if HAS_EMAIL_MODULE and self.email_extractor:
+                        email_msg = self.email_extractor.extract_message(
+                            record, col_map, rec_idx, folder_name=folder_name,
+                            tables=self.tables, mailbox_num=self.current_mailbox)
+                    contact = self._extract_contact_fields(email_msg, prop_blob)
+                    vcard = self._build_vcard(contact)
+                    if vcard:
+                        name_safe = re.sub(r'[<>:"/\\|?*]', '_', contact.get('name', 'contact'))[:40]
+                        filename = f"{date_str}_{rec_idx}_{name_safe}.vcf"
+                        out_path = Path(output_dir) / filename
+                        with open(out_path, 'w', encoding='utf-8') as f:
+                            f.write(vcard)
+                        exported_vcf += 1
+                else:
+                    # Export as EML
+                    sender = extract_sender_from_blob(prop_blob) if prop_blob else ""
+                    msgid = extract_message_id_from_blob(prop_blob) if prop_blob else ""
+                    has_attach = get_bytes_value(record, col_map.get('HasAttachments', -1))
+                    has_attachments = bool(has_attach and has_attach != b'\x00')
+                    attachments = self._load_attachments_for_export(record, col_map)
 
-                out_path = Path(output_dir) / filename
-                with open(out_path, 'wb') as f:
-                    f.write(eml_content)
-                exported += 1
+                    email_data = {
+                        'record_index': rec_idx,
+                        'subject': subject,
+                        'sender_name': sender,
+                        'sender_email': f"{sender}@lab.sith.uz" if sender else "unknown@lab.sith.uz",
+                        'recipient_name': sender,
+                        'recipient_email': f"{sender}@lab.sith.uz" if sender else "unknown@lab.sith.uz",
+                        'message_id': msgid,
+                        'date_sent': date_sent,
+                        'folder_name': folder_name,
+                        'has_attachments': has_attachments,
+                        'body_text': subject,
+                        'attachments': attachments
+                    }
+
+                    filename = f"{date_str}_{rec_idx}_{subject_safe}.eml"
+                    eml_content = create_eml_content(email_data)
+                    out_path = Path(output_dir) / filename
+                    with open(out_path, 'wb') as f:
+                        f.write(eml_content)
+                    exported_eml += 1
 
             except Exception as e:
                 self.status.showMessage(f"Error exporting record {rec_idx}: {e}")
 
         self.progress.setVisible(False)
-        self.status.showMessage(f"Exported {exported} emails to {output_dir}")
-        QMessageBox.information(self, "Export", f"Exported {exported} emails from {folder_name} to:\n{output_dir}")
+        total = exported_eml + exported_ics + exported_vcf
+        parts = []
+        if exported_eml:
+            parts.append(f"{exported_eml} emails (.eml)")
+        if exported_ics:
+            parts.append(f"{exported_ics} events (.ics)")
+        if exported_vcf:
+            parts.append(f"{exported_vcf} contacts (.vcf)")
+        detail = ", ".join(parts) if parts else "0 items"
+        self.status.showMessage(f"Exported {total} items to {output_dir}")
+        QMessageBox.information(self, "Export", f"Exported {detail} from {folder_name} to:\n{output_dir}")
         profiler.stop("Export Folder")
 
     def _on_export_calendar(self):
@@ -3961,7 +4002,9 @@ a {{ color: #0066cc; }}
         self.progress.setVisible(True)
         self.progress.setRange(0, len(all_indices))
 
-        exported = 0
+        exported_eml = 0
+        exported_ics = 0
+        exported_vcf = 0
         skipped = 0
 
         for i, (rec_idx, folder_id, folder_path_str) in enumerate(all_indices):
@@ -4029,18 +4072,45 @@ a {{ color: #0066cc; }}
                     folder_path = folder_path / part
                 folder_path.mkdir(parents=True, exist_ok=True)
 
-                # Generate filename
+                # Detect message type
+                msg_class = ''
+                if HAS_CALENDAR_MODULE and self.calendar_extractor:
+                    msg_class = self.calendar_extractor.get_message_class(record, col_map)
+                is_cal = (bool(msg_class) and HAS_CALENDAR_MODULE
+                          and self.calendar_extractor.is_calendar_item(msg_class))
+                is_vcf = msg_class.upper().startswith('IPM.CONTACT') if msg_class else False
+
                 date_str = date_received.strftime("%Y%m%d_%H%M%S") if date_received else "nodate"
                 subject_safe = re.sub(r'[<>:"/\\|?*]', '_', email_msg.subject or 'no_subject')[:40]
-                filename = f"{date_str}_{rec_idx}_{subject_safe}.eml"
 
-                # Export to EML
-                eml_content = email_msg.to_eml()
-                out_path = folder_path / filename
-                with open(out_path, 'wb') as f:
-                    f.write(eml_content)
-
-                exported += 1
+                if is_cal:
+                    # Export as ICS
+                    cal_event = self.calendar_extractor.extract_event(record, col_map, rec_idx)
+                    if cal_event:
+                        filename = f"{date_str}_{rec_idx}_{subject_safe}.ics"
+                        out_path = folder_path / filename
+                        with open(out_path, 'w', encoding='utf-8') as f:
+                            f.write(cal_event.to_ics())
+                        exported_ics += 1
+                elif is_vcf:
+                    # Export as VCF
+                    contact = self._extract_contact_fields(email_msg, get_bytes_value(record, col_map.get('PropertyBlob', -1)))
+                    vcard = self._build_vcard(contact)
+                    if vcard:
+                        name_safe = re.sub(r'[<>:"/\\|?*]', '_', contact.get('name', 'contact'))[:40]
+                        filename = f"{date_str}_{rec_idx}_{name_safe}.vcf"
+                        out_path = folder_path / filename
+                        with open(out_path, 'w', encoding='utf-8') as f:
+                            f.write(vcard)
+                        exported_vcf += 1
+                else:
+                    # Export as EML
+                    filename = f"{date_str}_{rec_idx}_{subject_safe}.eml"
+                    eml_content = email_msg.to_eml()
+                    out_path = folder_path / filename
+                    with open(out_path, 'wb') as f:
+                        f.write(eml_content)
+                    exported_eml += 1
 
             except Exception as e:
                 self.status.showMessage(f"Error exporting record {rec_idx}: {e}")
@@ -4048,12 +4118,22 @@ a {{ color: #0066cc; }}
         self.progress.setVisible(False)
 
         # Summary
+        total = exported_eml + exported_ics + exported_vcf
+        parts = []
+        if exported_eml:
+            parts.append(f"{exported_eml} emails (.eml)")
+        if exported_ics:
+            parts.append(f"{exported_ics} events (.ics)")
+        if exported_vcf:
+            parts.append(f"{exported_vcf} contacts (.vcf)")
+        detail = ", ".join(parts) if parts else "0 items"
+
         summary = f"Export complete!\n\n"
-        summary += f"Exported: {exported} emails\n"
-        summary += f"Skipped: {skipped} emails (filtered out)\n"
+        summary += f"Exported: {detail}\n"
+        summary += f"Skipped: {skipped} (filtered out)\n"
         summary += f"Location: {mailbox_dir}"
 
-        self.status.showMessage(f"Exported {exported} emails to {mailbox_dir}")
+        self.status.showMessage(f"Exported {total} items to {mailbox_dir}")
         QMessageBox.information(self, "Export Mailbox", summary)
         profiler.stop("Export Mailbox")
 
