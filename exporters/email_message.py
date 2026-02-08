@@ -567,164 +567,83 @@ class EmailExtractor:
 
     def _extract_subject(self, blob: bytes, sender_name: str = "") -> str:
         """
-        Extract subject from PropertyBlob.
+        Extract subject from PropertyBlob by scanning M-marker entries.
 
-        PropertyBlob structure: ... <sender_name> M <length> <subject_data> ...
-        The sender name is followed by M marker (0x4d), then a length byte,
-        then the subject bytes.
+        PropertyBlob contains sequential M entries: M<length><data>
+        Structure: [system paths] [sender_name] [SUBJECT] [subject_dup] [message-id] ...
+        Subject is the entry immediately after the sender name entry.
         """
         if not blob or len(blob) < 50:
             return ""
 
-        # Try both raw and decompressed blob
-        blobs_to_try = [blob]
+        # Decompress blob (M entries are in decompressed data)
         try:
             from dissect.esedb.compression import decompress as dissect_decompress
-            decompressed = dissect_decompress(blob)
-            if decompressed != blob:
-                blobs_to_try.append(decompressed)
+            blob = dissect_decompress(blob)
         except:
             pass
 
-        for data in blobs_to_try:
-            # Strategy 1: find "<sender_name>M" pattern using dynamic sender name
-            if sender_name and len(sender_name) >= 3:
-                sender_bytes = sender_name.encode('ascii', errors='ignore')
-                # Try full name, then shorter suffixes (last 4, 3, 2 chars + M)
-                patterns = [sender_bytes + b'M']
-                for slen in range(min(6, len(sender_bytes)), 1, -1):
-                    patterns.append(sender_bytes[-slen:] + b'M')
-
-                for pattern in patterns:
-                    pos = data.find(pattern)
-                    if pos >= 0:
-                        subject_start = pos + len(pattern)
-                        result = self._extract_subject_at_position(data, subject_start)
-                        if result:
-                            return result
-
-            # Strategy 2: generic suffix patterns (match most name endings + M)
-            for suffix in [b'erM', b'orM', b'stM', b'onM', b'anM', b'enM',
-                           b'inM', b'esM', b'eyM', b'lyM', b'thM', b'leM',
-                           b'neM', b'ceM', b'seM', b'teM', b'reM', b'deM']:
-                pos = data.find(suffix)
-                if pos >= 0:
-                    subject_start = pos + len(suffix)
-                    result = self._extract_subject_at_position(data, subject_start)
-                    if result:
-                        return result
-
-        # Fallback: scan M/K markers for first readable non-system text (min 3 chars)
-        skip_words = [b'admin', b'exchange', b'recipient', b'fydib',
-                      b'pdlt', b'group', b'index', b'system', b'mailbox',
-                      b'/o=', b'/ou=', b'cn=', b'ex:', b'http']
-        sender_lower = sender_name.lower().encode('ascii', errors='ignore') if sender_name else b''
-
-        for data in blobs_to_try:
-            for i in range(len(data) - 5):
-                if data[i] not in (0x4d, 0x4b):  # M or K marker
+        # Parse all M entries
+        entries = []
+        i = 0
+        while i < len(blob) - 3:
+            if blob[i] == ord('M') and 2 <= blob[i + 1] <= 100:
+                length = blob[i + 1]
+                if i + 2 + length <= len(blob):
+                    content = blob[i + 2:i + 2 + length]
+                    entries.append(content)
+                    i += 2 + length
                     continue
-                length = data[i + 1]
-                if length < 3 or length > 100:
-                    continue
-                if i + 2 + length > len(data):
-                    continue
-                potential = data[i + 2:i + 2 + length]
-                if not all(32 <= b <= 126 for b in potential):
-                    continue
-                text_lower = potential.lower()
-                if any(w in text_lower for w in skip_words):
-                    continue
-                if b'@' in potential or potential.startswith(b'<'):
-                    continue
-                if sender_lower and text_lower.strip() == sender_lower.strip():
-                    continue
-                text = potential.decode('ascii', errors='ignore')
-                if len(text) >= 3:
-                    return text
+            i += 1
 
-        return ""
+        if not entries:
+            return ""
 
-    def _extract_subject_at_position(self, blob: bytes, pos: int) -> str:
-        """
-        Extract subject data starting at position (right after senderM marker).
+        # Find sender entry index
+        sender_idx = -1
+        if sender_name and len(sender_name) >= 2:
+            sender_bytes = sender_name.encode('ascii', errors='ignore')
+            for idx, content in enumerate(entries):
+                if content == sender_bytes or content.rstrip(b'\x00') == sender_bytes:
+                    sender_idx = idx
+                    break
 
-        Skips entries that look like person names (recipients) and continues
-        scanning for the actual subject.
-        """
-        scan_pos = pos
-        # Scan up to 5 entries (sender may be followed by multiple recipients)
-        for _ in range(5):
-            if scan_pos >= len(blob) - 2:
-                return ""
-
-            length = blob[scan_pos]
-            if length < 2 or length > 100:
-                return ""
-            if scan_pos + 1 + length > len(blob):
-                return ""
-
-            subject_data = blob[scan_pos:scan_pos + 1 + length]
-            content = subject_data[1:]  # Skip length byte
+        # Subject is the entry right after sender
+        if sender_idx >= 0 and sender_idx + 1 < len(entries):
+            content = entries[sender_idx + 1]
 
             # Check for repeat pattern encoding (AAAA BBBB style)
             if self._looks_like_repeat_encoding(content):
-                return self._decode_repeat_pattern(subject_data)
+                return self._decode_repeat_pattern(bytes([len(content)]) + content)
 
-            # Skip Message-IDs
-            if content and content[0] == 0x3c:  # '<'
-                # Jump past this entry and look for next M marker
-                scan_pos = self._find_next_m_entry(blob, scan_pos + 1 + length)
-                if scan_pos < 0:
-                    return ""
-                continue
-
-            # Skip emails
-            if b'@' in content:
-                scan_pos = self._find_next_m_entry(blob, scan_pos + 1 + length)
-                if scan_pos < 0:
-                    return ""
-                continue
-
-            # Check if this looks like a person name (only letters and spaces)
             text = self._extract_printable_text(content)
-            if text and self._looks_like_person_name(text):
-                # Skip this recipient name, find next M entry
-                scan_pos = self._find_next_m_entry(blob, scan_pos + 1 + length)
-                if scan_pos < 0:
-                    return ""
-                continue
-
-            # Not a name, not an email, not a Message-ID — this is the subject
             if text:
                 return text
-            return ""
+
+        # Fallback: return first non-system, non-sender, non-email entry
+        sender_lower = sender_name.lower() if sender_name else ""
+        for content in entries:
+            # Skip non-printable
+            if not all(32 <= b <= 126 for b in content):
+                continue
+            text = content.decode('ascii', errors='ignore')
+            if len(text) < 3:
+                continue
+            # Skip system strings
+            text_lower = text.lower()
+            if any(w in text_lower for w in ['fydib', 'recipients', 'cn=',
+                                              '/o=', '/ou=', 'exchange',
+                                              'indexing', 'bigfunnel']):
+                continue
+            # Skip emails and Message-IDs
+            if '@' in text or text.startswith('<'):
+                continue
+            # Skip sender name
+            if sender_lower and text_lower.strip() == sender_lower.strip():
+                continue
+            return text
 
         return ""
-
-    def _find_next_m_entry(self, blob: bytes, start: int) -> int:
-        """Find the next M marker entry position after start. Returns data position (after M+length)."""
-        for i in range(start, min(start + 100, len(blob) - 3)):
-            if blob[i] == ord('M') and 2 <= blob[i + 1] <= 100:
-                return i + 1  # Return position of the length byte
-        return -1
-
-    @staticmethod
-    def _looks_like_person_name(text: str) -> bool:
-        """Check if text looks like a person name (only letters and spaces, 2-3 words)."""
-        if not text or len(text) < 3:
-            return False
-        # Person names are letters and spaces only
-        if not all(c.isalpha() or c.isspace() for c in text):
-            return False
-        # Should have 1-3 words, each starting with uppercase
-        words = text.split()
-        if len(words) < 1 or len(words) > 4:
-            return False
-        # At least one word should start with uppercase
-        if any(w[0].isupper() for w in words):
-            return True
-        return False
 
     def _extract_printable_text(self, data: bytes) -> str:
         """Extract printable ASCII text from bytes."""
