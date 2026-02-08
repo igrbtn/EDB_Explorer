@@ -634,29 +634,85 @@ class EmailExtractor:
         return ""
 
     def _extract_subject_at_position(self, blob: bytes, pos: int) -> str:
-        """Extract subject data starting at position (right after senderM marker)."""
-        if pos >= len(blob) - 2:
+        """
+        Extract subject data starting at position (right after senderM marker).
+
+        Skips entries that look like person names (recipients) and continues
+        scanning for the actual subject.
+        """
+        scan_pos = pos
+        # Scan up to 5 entries (sender may be followed by multiple recipients)
+        for _ in range(5):
+            if scan_pos >= len(blob) - 2:
+                return ""
+
+            length = blob[scan_pos]
+            if length < 2 or length > 100:
+                return ""
+            if scan_pos + 1 + length > len(blob):
+                return ""
+
+            subject_data = blob[scan_pos:scan_pos + 1 + length]
+            content = subject_data[1:]  # Skip length byte
+
+            # Check for repeat pattern encoding (AAAA BBBB style)
+            if self._looks_like_repeat_encoding(content):
+                return self._decode_repeat_pattern(subject_data)
+
+            # Skip Message-IDs
+            if content and content[0] == 0x3c:  # '<'
+                # Jump past this entry and look for next M marker
+                scan_pos = self._find_next_m_entry(blob, scan_pos + 1 + length)
+                if scan_pos < 0:
+                    return ""
+                continue
+
+            # Skip emails
+            if b'@' in content:
+                scan_pos = self._find_next_m_entry(blob, scan_pos + 1 + length)
+                if scan_pos < 0:
+                    return ""
+                continue
+
+            # Check if this looks like a person name (only letters and spaces)
+            text = self._extract_printable_text(content)
+            if text and self._looks_like_person_name(text):
+                # Skip this recipient name, find next M entry
+                scan_pos = self._find_next_m_entry(blob, scan_pos + 1 + length)
+                if scan_pos < 0:
+                    return ""
+                continue
+
+            # Not a name, not an email, not a Message-ID — this is the subject
+            if text:
+                return text
             return ""
 
-        length = blob[pos]
-        if length < 2 or length > 100:
-            return ""
-        if pos + 1 + length > len(blob):
-            return ""
+        return ""
 
-        subject_data = blob[pos:pos + 1 + length]
-        content = subject_data[1:]  # Skip length byte
+    def _find_next_m_entry(self, blob: bytes, start: int) -> int:
+        """Find the next M marker entry position after start. Returns data position (after M+length)."""
+        for i in range(start, min(start + 100, len(blob) - 3)):
+            if blob[i] == ord('M') and 2 <= blob[i + 1] <= 100:
+                return i + 1  # Return position of the length byte
+        return -1
 
-        # Check for repeat pattern encoding (AAAA BBBB style)
-        if self._looks_like_repeat_encoding(content):
-            return self._decode_repeat_pattern(subject_data)
-
-        # Skip Message-IDs
-        if content and content[0] == 0x3c:  # '<'
-            return ""
-
-        # Extract printable text
-        return self._extract_printable_text(content)
+    @staticmethod
+    def _looks_like_person_name(text: str) -> bool:
+        """Check if text looks like a person name (only letters and spaces, 2-3 words)."""
+        if not text or len(text) < 3:
+            return False
+        # Person names are letters and spaces only
+        if not all(c.isalpha() or c.isspace() for c in text):
+            return False
+        # Should have 1-3 words, each starting with uppercase
+        words = text.split()
+        if len(words) < 1 or len(words) > 4:
+            return False
+        # At least one word should start with uppercase
+        if any(w[0].isupper() for w in words):
+            return True
+        return False
 
     def _extract_printable_text(self, data: bytes) -> str:
         """Extract printable ASCII text from bytes."""
