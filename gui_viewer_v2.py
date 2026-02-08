@@ -3537,6 +3537,13 @@ a {{ color: #0066cc; }}
                 date_str = date_sent.strftime("%Y%m%d_%H%M%S") if date_sent else "nodate"
                 subject_safe = re.sub(r'[<>:"/\\|?*]', '_', subject or 'no_subject')[:50]
 
+                # Extract full EmailMessage for EML/VCF export
+                email_msg = None
+                if not is_cal and HAS_EMAIL_MODULE and self.email_extractor:
+                    email_msg = self.email_extractor.extract_message(
+                        record, col_map, rec_idx, folder_name=folder_name,
+                        tables=self.tables, mailbox_num=self.current_mailbox)
+
                 if is_cal:
                     # Export as ICS
                     cal_event = self.calendar_extractor.extract_event(record, col_map, rec_idx)
@@ -3548,11 +3555,6 @@ a {{ color: #0066cc; }}
                         exported_ics += 1
                 elif is_vcf:
                     # Export as VCF
-                    email_msg = None
-                    if HAS_EMAIL_MODULE and self.email_extractor:
-                        email_msg = self.email_extractor.extract_message(
-                            record, col_map, rec_idx, folder_name=folder_name,
-                            tables=self.tables, mailbox_num=self.current_mailbox)
                     contact = self._extract_contact_fields(email_msg, prop_blob)
                     vcard = self._build_vcard(contact)
                     if vcard:
@@ -3562,31 +3564,10 @@ a {{ color: #0066cc; }}
                         with open(out_path, 'w', encoding='utf-8') as f:
                             f.write(vcard)
                         exported_vcf += 1
-                else:
-                    # Export as EML
-                    sender = extract_sender_from_blob(prop_blob) if prop_blob else ""
-                    msgid = extract_message_id_from_blob(prop_blob) if prop_blob else ""
-                    has_attach = get_bytes_value(record, col_map.get('HasAttachments', -1))
-                    has_attachments = bool(has_attach and has_attach != b'\x00')
-                    attachments = self._load_attachments_for_export(record, col_map)
-
-                    email_data = {
-                        'record_index': rec_idx,
-                        'subject': subject,
-                        'sender_name': sender,
-                        'sender_email': f"{sender}@lab.sith.uz" if sender else "unknown@lab.sith.uz",
-                        'recipient_name': sender,
-                        'recipient_email': f"{sender}@lab.sith.uz" if sender else "unknown@lab.sith.uz",
-                        'message_id': msgid,
-                        'date_sent': date_sent,
-                        'folder_name': folder_name,
-                        'has_attachments': has_attachments,
-                        'body_text': subject,
-                        'attachments': attachments
-                    }
-
+                elif email_msg:
+                    # Export as EML using EmailMessage.to_eml()
                     filename = f"{date_str}_{rec_idx}_{subject_safe}.eml"
-                    eml_content = create_eml_content(email_data)
+                    eml_content = email_msg.to_eml()
                     out_path = Path(output_dir) / filename
                     with open(out_path, 'wb') as f:
                         f.write(eml_content)
