@@ -558,7 +558,7 @@ class EmailExtractor:
         Extract subject from PropertyBlob.
 
         PropertyBlob structure:
-        - ... M <length> <sender_name> M <length> <subject_data> ...
+        - ... M 0x0d "Rosetta Stone" M <length> <subject_data> ...
         - After sender's ending M, the length byte comes directly, then subject data
 
         For repeat patterns like "AAAA BBBB CCCC":
@@ -567,7 +567,7 @@ class EmailExtractor:
         if not blob or len(blob) < 50:
             return ""
 
-        # Primary: Find the sender section ending with known patterns
+        # Find the sender section ending with "StoneM" (or similar)
         sender_end_patterns = [b'StoneM', b'toneM', b'oneM', b'atorM']
         subject_start = -1
 
@@ -582,58 +582,25 @@ class EmailExtractor:
             length = blob[subject_start]
 
             if 2 <= length <= 100 and subject_start + 1 + length <= len(blob):
+                # Build the data for decode: include length byte and content
                 subject_data = blob[subject_start:subject_start + 1 + length]
-                content = subject_data[1:]
 
+                # Check for repeat pattern encoding (AAAA BBBB style)
+                content = subject_data[1:]  # Skip length byte for check
                 if self._looks_like_repeat_encoding(content):
                     return self._decode_repeat_pattern(subject_data)
 
-                if content and content[0] != 0x3c:  # Skip Message-ID
+                # Check for Message-ID (skip if starts with '<')
+                if content and content[0] == 0x3c:  # '<'
+                    pass  # Skip, try alternative search
+                else:
+                    # Regular text extraction - trust the pattern
                     text = self._extract_printable_text(content)
                     if text:
                         return text
 
-        # Fallback: scan for the second-to-last M marker with printable text.
-        # In PropertyBlob, the subject is typically the second M+text entry
-        # (first is sender, second is subject). Skip LDAP/system entries.
-        skip_words = ['admin', 'exchange', 'recipient', 'fydib', 'pdlt', 'group',
-                      'index', '/o=', '/ou=', '/cn=', 'system', 'adportal']
-        m_entries = []
-
-        for i in range(len(blob) - 5):
-            if blob[i] != 0x4d:  # 'M'
-                continue
-            length = blob[i + 1]
-            if length < 2 or length > 100:
-                continue
-            if i + 2 + length > len(blob):
-                continue
-
-            content = blob[i + 2:i + 2 + length]
-
-            if self._looks_like_repeat_encoding(content):
-                subject_data = blob[i + 1:i + 2 + length]
-                decoded = self._decode_repeat_pattern(subject_data)
-                if decoded:
-                    return decoded
-
-            if content and content[0] == 0x3c:
-                continue
-
-            text = self._extract_printable_text(content)
-            if not text or len(text) < 2:
-                continue
-
-            text_lower = text.lower()
-            if any(w in text_lower for w in skip_words):
-                continue
-
-            m_entries.append(text)
-
-        # Subject is typically the second M+text entry (after sender name)
-        if len(m_entries) >= 2:
-            return m_entries[1]
-
+        # No fallback - only return subject when we find proper pattern
+        # This avoids picking up system data like folder names or LDAP paths
         return ""
 
     def _extract_printable_text(self, data: bytes) -> str:
