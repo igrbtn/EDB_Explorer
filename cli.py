@@ -54,13 +54,13 @@ except ImportError:
 
 # Import local modules
 try:
-    from email_message import EmailMessage, EmailExtractor
+    from exporters.email_message import EmailMessage, EmailExtractor
     HAS_EMAIL_MODULE = True
 except ImportError:
     HAS_EMAIL_MODULE = False
 
 try:
-    from calendar_message import CalendarExtractor, export_calendar_to_ics, CALENDAR_MESSAGE_CLASSES
+    from exporters.calendar_message import CalendarExtractor, export_calendar_to_ics, CALENDAR_MESSAGE_CLASSES
     HAS_CALENDAR_MODULE = True
 except ImportError:
     HAS_CALENDAR_MODULE = False

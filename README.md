@@ -198,22 +198,30 @@ python cli.py database.edb export-calendar -m 103 -o calendar.ics
 
 ```
 edb_exporter/
-├── gui_viewer_v2.py      # Main GUI application (dark mode)
-├── email_message.py      # Email extraction and EML export
-├── calendar_message.py   # Calendar extraction and ICS export
-├── lzxpress.py           # LZXPRESS decompression utilities
-├── folder_mapping.py     # Folder name mapping
-├── cli.py                # Command-line interface
-├── icon.png              # Application icon
-├── icon.ico              # Application icon (Windows)
-├── VERSION               # Version number
-├── src/
-│   └── core/
-│       └── ese_reader.py # ESE database utilities
-├── requirements.txt      # Python dependencies
-├── install_windows.bat   # Windows install script
-├── install_mac.sh        # macOS install script
-└── install_ubuntu.sh     # Ubuntu/Debian install script
+├── gui_viewer_v2.py          # Main GUI application (dark mode)
+├── cli.py                    # Command-line interface
+├── VERSION                   # Version number
+├── requirements.txt          # Python dependencies
+│
+├── core/                     # Core parsing & decompression
+│   ├── lzxpress.py           # LZXPRESS decompression utilities
+│   ├── ese_reader.py         # ESE database utilities
+│   └── folder_mapping.py     # Folder name mapping
+│
+├── exporters/                # Message extraction & export
+│   ├── email_message.py      # Email extraction and EML export
+│   └── calendar_message.py   # Calendar/contact extraction and ICS/VCF export
+│
+├── assets/                   # Icons and resources
+│   ├── icon.png
+│   └── icon.ico
+│
+├── screenshots/              # Documentation screenshots
+│
+└── install/                  # Platform install scripts
+    ├── install_windows.bat
+    ├── install_mac.sh
+    └── install_ubuntu.sh
 ```
 
 ## Data Flow

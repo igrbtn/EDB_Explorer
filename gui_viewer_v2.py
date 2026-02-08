@@ -103,7 +103,7 @@ from email import encoders
 
 # Try to import LZXPRESS decompressor
 try:
-    from lzxpress import decompress_exchange_body, extract_text_from_html, extract_body_from_property_blob, get_body_preview, get_html_content
+    from core.lzxpress import decompress_exchange_body, extract_text_from_html, extract_body_from_property_blob, get_body_preview, get_html_content
     HAS_LZXPRESS = True
 except ImportError:
     HAS_LZXPRESS = False
@@ -117,9 +117,7 @@ except ImportError:
 
 # Try to import ESE Reader module
 try:
-    import sys
-    sys.path.insert(0, str(Path(__file__).parent / 'src' / 'core'))
-    from ese_reader import (
+    from core.ese_reader import (
         ESEReader, ESEColumnType,
         extract_subject_from_property_blob as ese_extract_subject,
         extract_sender_from_property_blob as ese_extract_sender,
@@ -131,7 +129,7 @@ except ImportError:
 
 # Try to import folder mapping
 try:
-    from folder_mapping import get_folder_name as get_mapped_folder_name, SPECIAL_FOLDER_MAP
+    from core.folder_mapping import get_folder_name as get_mapped_folder_name, SPECIAL_FOLDER_MAP
     HAS_FOLDER_MAPPING = True
 except ImportError:
     HAS_FOLDER_MAPPING = False
@@ -139,14 +137,14 @@ except ImportError:
 
 # Import stable email extraction module
 try:
-    from email_message import EmailMessage, EmailExtractor, EmailAttachment
+    from exporters.email_message import EmailMessage, EmailExtractor, EmailAttachment
     HAS_EMAIL_MODULE = True
 except ImportError:
     HAS_EMAIL_MODULE = False
 
 # Import calendar extraction module
 try:
-    from calendar_message import CalendarEvent, CalendarExtractor, export_calendar_to_ics, CALENDAR_MESSAGE_CLASSES
+    from exporters.calendar_message import CalendarEvent, CalendarExtractor, export_calendar_to_ics, CALENDAR_MESSAGE_CLASSES
     HAS_CALENDAR_MODULE = True
 except ImportError:
     HAS_CALENDAR_MODULE = False
@@ -883,7 +881,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"Exchange EDB Exporter v{VERSION}")
-        icon_path = Path(__file__).parent / "icon.png"
+        icon_path = Path(__file__).parent / "assets" / "icon.png"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
         self.setMinimumSize(1000, 500)
@@ -1692,7 +1690,7 @@ class MainWindow(QMainWindow):
                 if len(folder_id) >= 20:
                     folder_num = folder_id[-12:-8]  # Get the 4 hex chars for folder number
                     if HAS_FOLDER_MAPPING:
-                        from folder_mapping import FOLDER_NUM_TO_NAME
+                        from core.folder_mapping import FOLDER_NUM_TO_NAME
                         final_name = FOLDER_NUM_TO_NAME.get(folder_num, f'Folder_{folder_num}')
                     else:
                         final_name = f'Folder_{folder_num}'
