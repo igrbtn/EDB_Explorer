@@ -2966,6 +2966,99 @@ a {{ color: #0066cc; }}
         except:
             return None
 
+    def _load_attachments_for_export(self, record, col_map):
+        """Load attachments for a message record, returning [(filename, content_type, data)]."""
+        has_attach = get_bytes_value(record, col_map.get('HasAttachments', -1))
+        if not has_attach or has_attach == b'\x00':
+            return []
+
+        attach_table_name = f"Attachment_{self.current_mailbox}"
+        attach_table = self.tables.get(attach_table_name)
+        if not attach_table:
+            return []
+
+        attach_col_map = self._cached_attach_col_map if self._cached_attach_col_map else get_column_map(attach_table)
+        inid_to_record = self._cached_inid_to_record if self._cached_inid_to_record else {}
+
+        # Get linked attachment indices via SubobjectsBlob
+        subobjects = get_bytes_value(record, col_map.get('SubobjectsBlob', -1))
+        linked_inids = self._parse_subobjects_blob(subobjects) if subobjects else []
+
+        records_to_load = []
+        if linked_inids and linked_inids != ['FALLBACK']:
+            for inid_val in linked_inids:
+                if inid_val in inid_to_record:
+                    records_to_load.append(inid_to_record[inid_val])
+        elif not subobjects:
+            records_to_load = list(range(attach_table.get_number_of_records()))
+
+        attachments = []
+        for i in records_to_load:
+            try:
+                att_record = attach_table.get_record(i)
+                if not att_record:
+                    continue
+
+                prop_blob = get_bytes_value(att_record, attach_col_map.get('PropertyBlob', -1))
+                content = get_bytes_value(att_record, attach_col_map.get('Content', -1))
+                if not content:
+                    continue
+
+                # Get filename
+                filename = None
+                if prop_blob:
+                    filename = extract_attachment_filename(prop_blob)
+                if not filename:
+                    name_col = get_bytes_value(att_record, attach_col_map.get('Name', -1))
+                    if name_col:
+                        try:
+                            decoded = name_col.decode('utf-16-le').rstrip('\x00')
+                            if decoded and all(c.isprintable() for c in decoded):
+                                filename = decoded
+                        except:
+                            pass
+                if not filename:
+                    filename = f"attachment_{i}.bin"
+
+                # Get content type
+                content_type = "application/octet-stream"
+                if prop_blob:
+                    content_type = extract_attachment_content_type(prop_blob)
+
+                # Get actual data (resolve Long Values)
+                actual_content = content
+                if len(content) == 4:
+                    content_idx = attach_col_map.get('Content', -1)
+                    if content_idx >= 0:
+                        try:
+                            if att_record.is_long_value(content_idx):
+                                lv = att_record.get_value_data_as_long_value(content_idx)
+                                if lv and hasattr(lv, 'get_data'):
+                                    lv_data = lv.get_data()
+                                    if lv_data and len(lv_data) > 0:
+                                        actual_content = lv_data
+                                    else:
+                                        continue
+                                else:
+                                    continue
+                            else:
+                                continue
+                        except:
+                            continue
+                    else:
+                        continue
+                elif content.startswith(b'\xff\xfe'):
+                    try:
+                        actual_content = content.decode('utf-16-le').encode('utf-8')
+                    except:
+                        pass
+
+                attachments.append((filename, content_type, actual_content))
+            except:
+                pass
+
+        return attachments
+
     def _build_eml_attachments(self):
         """Build attachment data list for EML export (loads data on demand)."""
         eml_attachments = []
@@ -3139,6 +3232,9 @@ a {{ color: #0066cc; }}
 
                 date_sent = get_filetime_value(record, col_map.get('DateSent', -1))
 
+                # Load attachments for this message
+                attachments = self._load_attachments_for_export(record, col_map)
+
                 email_data = {
                     'record_index': rec_idx,
                     'subject': subject,
@@ -3151,7 +3247,7 @@ a {{ color: #0066cc; }}
                     'folder_name': folder_name,
                     'has_attachments': has_attachments,
                     'body_text': subject,
-                    'attachments': []  # Attachments not loaded in bulk export for performance
+                    'attachments': attachments
                 }
 
                 # Generate filename
