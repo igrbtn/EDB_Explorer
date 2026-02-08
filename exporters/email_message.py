@@ -559,56 +559,77 @@ class EmailExtractor:
 
         PropertyBlob structure: ... <sender_name> M <length> <subject_data> ...
         The sender name is followed by M marker (0x4d), then a length byte,
-        then the subject bytes. Works on raw blob (no decompression needed).
+        then the subject bytes.
         """
         if not blob or len(blob) < 50:
             return ""
 
-        # Strategy: find "<sender_name>M" pattern in raw blob, extract subject after it
-        if sender_name and len(sender_name) >= 3:
-            # Try full sender name + M, then progressively shorter suffixes
-            sender_bytes = sender_name.encode('ascii', errors='ignore')
-            for suffix_len in range(len(sender_bytes), max(2, len(sender_bytes) - 6), -1):
-                pattern = sender_bytes[-suffix_len:] + b'M'
-                pos = blob.find(pattern)
+        # Try both raw and decompressed blob
+        blobs_to_try = [blob]
+        try:
+            from dissect.esedb.compression import decompress as dissect_decompress
+            decompressed = dissect_decompress(blob)
+            if decompressed != blob:
+                blobs_to_try.append(decompressed)
+        except:
+            pass
+
+        for data in blobs_to_try:
+            # Strategy 1: find "<sender_name>M" pattern using dynamic sender name
+            if sender_name and len(sender_name) >= 3:
+                sender_bytes = sender_name.encode('ascii', errors='ignore')
+                # Try full name, then shorter suffixes (last 4, 3, 2 chars + M)
+                patterns = [sender_bytes + b'M']
+                for slen in range(min(6, len(sender_bytes)), 1, -1):
+                    patterns.append(sender_bytes[-slen:] + b'M')
+
+                for pattern in patterns:
+                    pos = data.find(pattern)
+                    if pos >= 0:
+                        subject_start = pos + len(pattern)
+                        result = self._extract_subject_at_position(data, subject_start)
+                        if result:
+                            return result
+
+            # Strategy 2: generic suffix patterns (match most name endings + M)
+            for suffix in [b'erM', b'orM', b'stM', b'onM', b'anM', b'enM',
+                           b'inM', b'esM', b'eyM', b'lyM', b'thM', b'leM',
+                           b'neM', b'ceM', b'seM', b'teM', b'reM', b'deM']:
+                pos = data.find(suffix)
                 if pos >= 0:
-                    subject_start = pos + len(pattern)
-                    result = self._extract_subject_at_position(blob, subject_start)
+                    subject_start = pos + len(suffix)
+                    result = self._extract_subject_at_position(data, subject_start)
                     if result:
                         return result
-                    break  # Found pattern but no valid subject, try fallback
 
-        # Fallback: scan M/K markers for first readable non-system text
+        # Fallback: scan M/K markers for first readable non-system text (min 3 chars)
         skip_words = [b'admin', b'exchange', b'recipient', b'fydib',
                       b'pdlt', b'group', b'index', b'system', b'mailbox',
-                      b'/O=', b'/OU=', b'CN=', b'EX:', b'http']
+                      b'/o=', b'/ou=', b'cn=', b'ex:', b'http']
         sender_lower = sender_name.lower().encode('ascii', errors='ignore') if sender_name else b''
 
-        for i in range(len(blob) - 5):
-            if blob[i] not in (0x4d, 0x4b):  # M or K marker
-                continue
-            length = blob[i + 1]
-            if length < 2 or length > 100:
-                continue
-            if i + 2 + length > len(blob):
-                continue
-            potential = blob[i + 2:i + 2 + length]
-            # Must be printable
-            if not all(32 <= b <= 126 for b in potential):
-                continue
-            text_lower = potential.lower()
-            # Skip system strings
-            if any(w in text_lower for w in skip_words):
-                continue
-            # Skip emails and Message-IDs
-            if b'@' in potential or potential.startswith(b'<'):
-                continue
-            # Skip if it matches sender name
-            if sender_lower and text_lower.strip() == sender_lower.strip():
-                continue
-            text = potential.decode('ascii', errors='ignore')
-            if len(text) >= 2:
-                return text
+        for data in blobs_to_try:
+            for i in range(len(data) - 5):
+                if data[i] not in (0x4d, 0x4b):  # M or K marker
+                    continue
+                length = data[i + 1]
+                if length < 3 or length > 100:
+                    continue
+                if i + 2 + length > len(data):
+                    continue
+                potential = data[i + 2:i + 2 + length]
+                if not all(32 <= b <= 126 for b in potential):
+                    continue
+                text_lower = potential.lower()
+                if any(w in text_lower for w in skip_words):
+                    continue
+                if b'@' in potential or potential.startswith(b'<'):
+                    continue
+                if sender_lower and text_lower.strip() == sender_lower.strip():
+                    continue
+                text = potential.decode('ascii', errors='ignore')
+                if len(text) >= 3:
+                    return text
 
         return ""
 
