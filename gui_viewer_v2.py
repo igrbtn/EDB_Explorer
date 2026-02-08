@@ -2890,83 +2890,53 @@ a {{ color: #0066cc; }}
                 if not att_record:
                     continue
 
+                # Only read PropertyBlob and Name for metadata - NOT Content (it's a Long Value, very slow)
                 prop_blob = get_bytes_value(att_record, attach_col_map.get('PropertyBlob', -1))
-                content = get_bytes_value(att_record, attach_col_map.get('Content', -1))
 
-                # Try to get filename from Name column first
-                name_col = get_bytes_value(att_record, attach_col_map.get('Name', -1))
+                # Get filename
                 filename = None
-
-                # Name column is often encrypted, try PropertyBlob first
                 if prop_blob:
                     filename = extract_attachment_filename(prop_blob)
 
-                if not filename and name_col:
-                    try:
-                        decoded = name_col.decode('utf-16-le').rstrip('\x00')
-                        # Check if it looks like a valid filename
-                        if decoded and all(c.isprintable() for c in decoded):
-                            filename = decoded
-                    except:
-                        pass
+                if not filename:
+                    name_col = get_bytes_value(att_record, attach_col_map.get('Name', -1))
+                    if name_col:
+                        try:
+                            decoded = name_col.decode('utf-16-le').rstrip('\x00')
+                            if decoded and all(c.isprintable() for c in decoded):
+                                filename = decoded
+                        except:
+                            pass
 
                 if not filename:
                     filename = f"attachment_{i}.bin"
 
-                # Get content type from PropertyBlob (ContentType column often encrypted)
+                # Get content type from PropertyBlob
                 content_type = "application/octet-stream"
                 if prop_blob:
                     content_type = extract_attachment_content_type(prop_blob)
 
-                # Skip if no content
-                if not content:
-                    continue
+                # Get size from Size column (quick integer read, not the actual content)
+                size_data = get_bytes_value(att_record, attach_col_map.get('Size', -1))
+                content_size = 0
+                if size_data:
+                    if len(size_data) == 8:
+                        content_size = struct.unpack('<Q', size_data)[0]
+                    elif len(size_data) == 4:
+                        content_size = struct.unpack('<I', size_data)[0]
 
-                is_external = False
-                content_size = len(content)
+                display_name = f"{filename} ({content_size} bytes)" if content_size > 0 else f"{filename}"
 
-                # Check if this is a Long Value reference (4 bytes) - get size without reading data
-                if len(content) == 4:
-                    content_idx = attach_col_map.get('Content', -1)
-                    if content_idx >= 0:
-                        try:
-                            if att_record.is_long_value(content_idx):
-                                lv = att_record.get_value_data_as_long_value(content_idx)
-                                if lv:
-                                    # Get size without reading full data
-                                    if hasattr(lv, 'get_size'):
-                                        content_size = lv.get_size()
-                                    else:
-                                        content_size = 0  # Size unknown, will load on demand
-                                    if content_size == 0:
-                                        # Check if truly empty or just unknown size
-                                        content_size = -1  # Placeholder for "has data"
-                                else:
-                                    is_external = True
-                            else:
-                                is_external = True
-                        except Exception as e:
-                            is_external = True
-                    else:
-                        is_external = True
-
-                if is_external:
-                    display_name = f"{filename} (external reference - {content.hex()})"
-                elif content_size > 0:
-                    display_name = f"{filename} ({content_size} bytes)"
-                else:
-                    display_name = f"{filename} (stored)"
-
-                # Deduplicate by filename and size
+                # Deduplicate by filename
                 is_duplicate = False
                 for existing in self.current_attachments:
-                    if existing[0] == filename and existing[2] == content_size:
+                    if existing[0] == filename:
                         is_duplicate = True
                         break
 
                 if not is_duplicate:
                     # Store metadata only - data loaded on demand via _get_attachment_data()
-                    self.current_attachments.append((filename, content_type, content_size, is_external, i))
+                    self.current_attachments.append((filename, content_type, content_size, False, i))
 
                     item = QListWidgetItem(display_name)
                     item.setData(Qt.ItemDataRole.UserRole, len(self.current_attachments) - 1)
