@@ -599,8 +599,36 @@ class EmailExtractor:
                     if text:
                         return text
 
-        # No fallback - only return subject when we find proper pattern
-        # This avoids picking up system data like folder names or LDAP paths
+        # Fallback: scan ALL M/K markers (0x4d/0x4b) for first printable text
+        skip_words = ['admin', 'exchange', 'recipient', 'labsith', 'fydib',
+                      'pdlt', 'group', 'index', 'system']
+        for i in range(len(blob) - 5):
+            if blob[i] not in (0x4d, 0x4b):  # M or K marker
+                continue
+            length = blob[i + 1]
+            if length < 2 or length > 100:
+                continue
+            if i + 2 + length > len(blob):
+                continue
+            potential = blob[i + 2:i + 2 + length]
+            # All bytes must be printable (including extended ASCII/Cyrillic)
+            if not all((32 <= b < 127) or (128 <= b <= 255) for b in potential):
+                continue
+            # Try to decode
+            text = None
+            for enc in ['utf-8', 'windows-1251', 'latin-1']:
+                try:
+                    text = potential.decode(enc)
+                    break
+                except:
+                    pass
+            if not text:
+                continue
+            # Skip system strings
+            if any(w in text.lower() for w in skip_words):
+                continue
+            return text
+
         return ""
 
     def _extract_printable_text(self, data: bytes) -> str:
