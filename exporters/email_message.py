@@ -15,7 +15,7 @@ from email.mime.base import MIMEBase
 from email.utils import format_datetime, formataddr
 from email import encoders
 from dataclasses import dataclass, field
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 
 
 @dataclass
@@ -514,6 +514,81 @@ class EmailExtractor:
 
         return text.strip()
 
+    def _extract_recipient_emails_from_list(self, record, col_idx: int) -> Dict[str, str]:
+        """
+        Extract name→email mapping from RecipientList column (long value).
+
+        RecipientList stores per-recipient blocks, each containing:
+        - Display name as M-entry (name + M marker)
+        - Email alias as M-entry (user@domain + M marker)
+
+        Returns dict mapping lowercase name → email address.
+        """
+        if col_idx < 0:
+            return {}
+
+        try:
+            lv = record.get_value_data_as_long_value(col_idx)
+            if not lv:
+                return {}
+            data = lv.data
+            if not data or len(data) < 20:
+                return {}
+        except:
+            return {}
+
+        try:
+            from dissect.esedb.compression import decompress as dissect_decompress
+            dec = dissect_decompress(data)
+        except:
+            dec = data
+
+        # Extract all M-entries: names and emails
+        names_ordered = []
+        emails_ordered = []
+        seen_names = set()
+
+        for i in range(len(dec) - 3):
+            if dec[i] != ord('M'):
+                continue
+            if not (2 <= dec[i + 1] <= 100):
+                continue
+            length = dec[i + 1]
+            if i + 2 + length > len(dec):
+                continue
+            text_data = dec[i + 2:i + 2 + length]
+
+            try:
+                text = text_data.decode('ascii', errors='ignore').strip()
+            except:
+                continue
+
+            if not text or len(text) < 3:
+                continue
+
+            # Email entry: contains @ and doesn't start with < (skip Message-IDs)
+            if '@' in text and not text.startswith('<'):
+                if '.' in text.split('@')[1] if '@' in text else False:
+                    if text.endswith('audit'):
+                        text = text[:-5]
+                    emails_ordered.append(text)
+                continue
+
+            # Name entry: mostly letters and spaces
+            if all(c.isalpha() or c.isspace() for c in text) and ' ' in text:
+                lower = text.lower()
+                if lower not in seen_names:
+                    seen_names.add(lower)
+                    names_ordered.append(text)
+
+        # Pair names with emails in order
+        result = {}
+        for idx, name in enumerate(names_ordered):
+            if idx < len(emails_ordered):
+                result[name.lower()] = emails_ordered[idx]
+
+        return result
+
     def _parse_rfc822_headers(self, body_text: str) -> dict:
         """Parse RFC822 headers from message body to get real From/To."""
         headers = {}
@@ -858,15 +933,21 @@ class EmailExtractor:
             msg.sender_email = self._extract_sender_email(prop_blob)
             msg.message_id = self._extract_message_id(prop_blob)
 
+        # Extract recipient name→email mapping from RecipientList column
+        recip_email_map = self._extract_recipient_emails_from_list(
+            record, col_map.get('RecipientList', -1)
+        )
+
         # Extract recipients from DisplayTo column (handles multiple)
         display_to = self._get_bytes(record, col_map.get('DisplayTo', -1))
         if display_to:
             recipient_names = self._extract_recipients_from_display_to(display_to)
             if recipient_names:
                 msg.to_names = recipient_names
-                # Domain will be updated below after sender email is fully resolved
+                # Look up real emails from RecipientList, fall back to placeholder
                 msg.to_emails = [
-                    f"{name.lower().replace(' ', '')}@unknown"
+                    recip_email_map.get(name.lower(),
+                        f"{name.lower().replace(' ', '')}@unknown")
                     for name in recipient_names
                 ]
 
