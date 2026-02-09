@@ -229,15 +229,18 @@ edb_exporter/
 ```
 EDB File → pyesedb → Tables Dict → Folder/Message Indexing → GUI Display
                                           ↓
-                    ┌─────────────────────┼─────────────────────┐
-                    ↓                     ↓                     ↓
-          Attachment extraction    Body extraction       Type detection
-          (Long Value B+ tree)  (LZXPRESS decompress)   (MessageClass)
-                    ↓                     ↓                     ↓
-              EML Export          HTML/Text Display    ┌────────┼────────┐
-                                                      ↓        ↓        ↓
-                                                    Email   Calendar  Contact
-                                                    (.eml)  (.ics)    (.vcf)
+              ┌───────────────┬───────────┼───────────┬─────────────────┐
+              ↓               ↓           ↓           ↓                 ↓
+        PropertyBlob    RecipientList  NativeBody  SubobjectsBlob  MessageClass
+        (decompress)    (Long Value)  (decompress)  (Inid refs)   (type detect)
+              ↓               ↓           ↓           ↓                 ↓
+        Sender name     Name→Email    HTML/Text   Attachment      ┌─────┼─────┐
+        Sender email    mapping       body        extraction      ↓     ↓     ↓
+        Subject                                   (LV B+ tree)  Email Calendar Contact
+              ↓               ↓           ↓           ↓         (.eml) (.ics)  (.vcf)
+              └───────────────┴───────────┴───────────┘
+                              ↓
+                    EmailMessage → Export
 ```
 
 ---
@@ -267,10 +270,9 @@ Exchange EDB File
 │
 └── Per-Mailbox Tables (XXX = mailbox number, e.g., 101, 103)
     ├── Folder_XXX         (Folder definitions)
-    ├── Message_XXX        (Email messages)
-    ├── Attachment_XXX     (File attachments)
-    ├── Recipient_XXX      (Recipients)
-    └── ...other tables
+    ├── Message_XXX        (Email messages, calendar, contacts)
+    ├── Attachment_XXX     (File attachments linked via SubobjectsBlob)
+    └── ...other tables (BigFunnel, indexes, etc.)
 ```
 
 ## Key Tables
@@ -342,10 +344,12 @@ Stores email messages and calendar items.
 | `IsHidden` | Bit | Hidden/system item flag |
 | `HasAttachments` | Bit | Attachment indicator |
 | `Importance` | Long | 0=Low, 1=Normal, 2=High |
-| `DisplayTo` | LongText | Recipients display |
-| `PropertyBlob` | LongBinary | MAPI properties (subject, sender, etc.) |
+| `DisplayTo` | LongText | Recipient display names (compressed, UTF-16-LE) |
+| `RecipientList` | LongBinary | Per-recipient blocks with name + email alias (LV) |
+| `SubjectPrefix` | LongText | Subject prefix ("RE:", "FW:") |
+| `PropertyBlob` | LongBinary | MAPI properties (subject, sender, message-ID) |
 | `NativeBody` | LongBinary | HTML body (LZXPRESS compressed) |
-| `SubobjectsBlob` | LongBinary | Attachment references |
+| `SubobjectsBlob` | LongBinary | Attachment references (0x21 + Inid) |
 
 **Message Classes (decompressed):**
 ```
@@ -422,23 +426,49 @@ html_text = html_bytes.decode('utf-8')
 ## PropertyBlob Structure
 
 PropertyBlob contains MAPI properties including subject, sender, and message-id.
+After LZXPRESS decompression, data contains M-entries (marker byte `M` + length + text).
 
 ```
-PropertyBlob Layout:
+Decompressed PropertyBlob Layout:
 ┌──────────────────────────────────────────────────────────────┐
-│  Header bytes (property tags, types)                         │
+│  Header bytes (ProP, property tags, types)                    │
 ├──────────────────────────────────────────────────────────────┤
-│  ... metadata (GUIDs, addresses, timestamps) ...             │
+│  CN paths: /o=Org/ou=.../cn=Recipients/cn=GUID-SENDER_NAME  │
+│  (Sender name appears in UPPERCASE, may be truncated)         │
 ├──────────────────────────────────────────────────────────────┤
-│  Sender name ending with 'M' marker                          │
-│  Example: "Administrator" + 0x4D ('M')                       │
+│  <SENDER_UPPERCASE>M + length + subject text (ASCII/UTF-8)   │
+│  <SENDER_UPPERCASE>I + length + subject text (UTF-16-LE)     │
 ├──────────────────────────────────────────────────────────────┤
-│  Subject: length byte + subject text                         │
-│  Example: 0x04 + "test" (4 bytes)                            │
+│  M + length + sender email (user@domain)                      │
+│  M + length + <Message-ID@domain>                             │
 ├──────────────────────────────────────────────────────────────┤
-│  Message-ID: <hex@domain>                                    │
-│  Example: <8f372b33baa04242a7fe@lab.sith.uz>                 │
+│  Tail: sender_email, mailbox_owner_email, sender_email        │
 └──────────────────────────────────────────────────────────────┘
+```
+
+**Subject extraction**: Find `<SENDER_NAME_UPPERCASE>M` or `I` marker in decompressed blob.
+The `M` marker indicates ASCII/UTF-8, `I` indicates UTF-16-LE (for CJK, etc.).
+Exchange may truncate long names, so progressively shorter prefixes are tried.
+
+## RecipientList Structure
+
+RecipientList is a Long Value containing per-recipient blocks (LZXPRESS compressed).
+
+```
+Decompressed RecipientList:
+┌─────────────────────────────────────────┐
+│  Recipient 1:                            │
+│    ProP header + CN path                 │
+│    M + len + "Display Name"              │
+│    EXM + CN path (again)                 │
+│    M + len + "user@domain" (email alias) │
+│    M + len + "Display Name" (again)      │
+├─────────────────────────────────────────┤
+│  Recipient 2:                            │
+│    (same structure)                       │
+├─────────────────────────────────────────┤
+│  ...                                     │
+└─────────────────────────────────────────┘
 ```
 
 ## Long Value (LV) Storage
@@ -476,10 +506,13 @@ Access via pyesedb:
 - `EmailAttachment` - attachment data structure
 
 **Key Methods:**
-- `extract_message(record, col_map, rec_idx)` - Extract complete email
-- `_extract_sender(blob)` - Extract sender from PropertyBlob
-- `_extract_subject(blob)` - Extract subject from PropertyBlob
-- `to_eml()` - Export to EML format
+- `extract_message(record, col_map, rec_idx)` - Extract complete email with all fields
+- `_extract_sender(blob)` - Extract sender name from decompressed PropertyBlob M-entries
+- `_extract_sender_email(blob)` - Extract sender email from PropertyBlob (M-entry with @)
+- `_extract_subject(blob, sender_name)` - Extract subject using `<SENDER_UPPERCASE>M/I` pattern
+- `_extract_recipients_from_display_to(data)` - Extract recipient names from DisplayTo column
+- `_extract_recipient_emails_from_list(record, col_idx)` - Extract name→email mapping from RecipientList
+- `to_eml()` - Export to EML format (RFC 2822 with body, headers, attachments)
 
 ## `exporters/calendar_message.py`
 
