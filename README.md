@@ -20,6 +20,7 @@ A Python GUI application for viewing and exporting emails from Microsoft Exchang
 - **Export entire mailbox** with date/subject/sender filters
 - **Bulk export contacts** from folder to single .vcf file
 - **Bulk export calendar** from folder to single .ics file
+- **Export to PST format** — folder or entire mailbox export as a single PST file (built-in `eml2pst` module, no external PST library required)
 - **Search and filter** messages by subject, from, to, read status, attachments
 - **Performance profiler** (debug mode via About dialog) with CSV export
 - **Mailbox owner detection** from Mailbox table (properly decompressed)
@@ -167,6 +168,32 @@ python cli.py database.edb export-calendar -m 103 -o calendar.ics
 - `-o, --output` - Output file/directory
 - `-v, --verbose` - Verbose output
 
+### EML to PST Conversion
+
+The built-in `eml2pst` module converts EML files into Outlook-compatible PST files. It implements the [MS-PST] specification in pure Python — no external PST library required.
+
+**From the GUI:** Choose "PST" format in the Export Folder or Export Mailbox dialogs.
+
+**Standalone CLI:**
+```bash
+# Convert a directory tree of EML files to PST
+python -m eml2pst ./exported_emails/ -o mailbox.pst
+
+# Nested subdirectories become PST folders
+python -m eml2pst ./exported/ -o archive.pst -n "Archive 2025"
+
+# Stream JSONL from stdin (for programmatic use)
+cat messages.jsonl | python -m eml2pst --stdin -o mailbox.pst
+```
+
+**JSONL format** (for `--stdin` mode):
+```json
+{"folder": "Inbox", "eml_file": "/path/to/message.eml"}
+{"folder": "Inbox/Projects", "eml": "<base64-encoded EML>"}
+```
+
+**What gets preserved:** Subject, sender, recipients (To/Cc/Bcc), date, importance, sensitivity, HTML and plain text body, and file attachments.
+
 ---
 
 # Application Architecture
@@ -212,6 +239,17 @@ edb_exporter/
 │   ├── email_message.py      # Email extraction and EML export
 │   └── calendar_message.py   # Calendar/contact extraction and ICS/VCF export
 │
+├── eml2pst/                  # EML-to-PST converter (pure Python)
+│   ├── cli.py                # Standalone CLI (directory or JSONL stdin input)
+│   ├── eml_parser.py         # RFC 5322 EML parser → MAPI properties
+│   ├── pst_file.py           # PST file builder (orchestrates all layers)
+│   ├── crc.py                # CRC-32 checksums for blocks/pages
+│   ├── utils.py              # FILETIME conversion, encoding helpers
+│   ├── ndb/                  # Node Database layer (blocks, B-trees, AMap)
+│   ├── ltp/                  # Lists/Tables/Properties layer (PC, TC, heap)
+│   ├── mapi/                 # MAPI property tags and constants
+│   └── messaging/            # Messaging layer (store, folders, messages)
+│
 ├── assets/                   # Icons and resources
 │   ├── icon.png
 │   └── icon.ico
@@ -241,6 +279,9 @@ EDB File → pyesedb → Tables Dict → Folder/Message Indexing → GUI Display
               └───────────────┴───────────┴───────────┘
                               ↓
                     EmailMessage → Export
+                         ↓            ↓
+                     EML files    PST file
+                                  (eml2pst)
 ```
 
 ---
@@ -526,6 +567,21 @@ Access via pyesedb:
 - `extract_event(record, col_map)` - Extract calendar event
 - `to_ics()` - Export to iCalendar format
 - `export_calendar_to_ics(events, path)` - Export multiple events
+
+## `eml2pst/` — EML to PST Converter
+
+Pure Python implementation of the [MS-PST] file format, organized in three layers:
+
+**NDB Layer** (`ndb/`): Node Database — data blocks with CRC-32, B-tree pages (NBT/BBT), AMap allocation maps, XBLOCK for large data, SLBLOCK for subnodes, and the PST file header.
+
+**LTP Layer** (`ltp/`): Lists, Tables, Properties — Heap-on-Node (HN) pages, Property Contexts (PC) for key-value properties, Table Contexts (TC) for tabular data, B-Tree-on-Heap (BTH) for property lookups.
+
+**Messaging Layer** (`messaging/`): MAPI objects — Message Store (NID 0x21), Name-to-ID Map (NID 0x61), Folders (PC + Hierarchy/Contents/Associated Contents TCs), Messages (PC + Recipients TC + Attachments TC + per-attachment PCs).
+
+**Key files:**
+- `pst_file.py` — `PSTFileBuilder` class: `add_folder()`, `add_message()`, `write()` — assigns offsets, builds B-trees, writes the final PST
+- `eml_parser.py` — Parses RFC 5322 EML via Python's `email` module, extracts MAPI-compatible properties
+- `cli.py` — Standalone CLI supporting directory input or JSONL stdin
 
 ## `core/lzxpress.py`
 
