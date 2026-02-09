@@ -569,14 +569,22 @@ class EmailExtractor:
         """
         Extract subject from PropertyBlob.
 
-        Primary strategy: subject appears as the first non-system consecutive
-        duplicate pair in the decompressed M-entries. This is structural —
-        no sender name or hardcoded patterns needed.
-
-        Fallback: sender-based matching, raw blob extraction.
+        Strategy 0: Raw blob — find <sender>M dynamically, extract printable chars
+        Strategy 1: Consecutive duplicate in decompressed M-entries
+        Strategy 2: Sender-based matching in decompressed entries
+        Strategy 3: Raw blob with sender suffix patterns
         """
         if not blob or len(blob) < 50:
             return ""
+
+        # Strategy 0: Use the original ese_reader extraction (works on raw blob)
+        try:
+            from core.ese_reader import extract_subject_from_property_blob
+            result = extract_subject_from_property_blob(blob)
+            if result:
+                return result
+        except ImportError:
+            pass
 
         # Decompress blob for M-entry parsing
         try:
