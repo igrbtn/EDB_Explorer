@@ -567,113 +567,63 @@ class EmailExtractor:
 
     def _extract_subject(self, blob: bytes, sender_name: str = "") -> str:
         """
-        Extract subject from PropertyBlob.
+        Extract subject from PropertyBlob using <sender_name>M pattern.
 
-        Strategy 0: Raw blob — find <sender>M dynamically, extract printable chars
-        Strategy 1: Consecutive duplicate in decompressed M-entries
-        Strategy 2: Sender-based matching in decompressed entries
-        Strategy 3: Raw blob with sender suffix patterns
+        1. Find <sender_name>M in raw blob → extract printable chars (fast, works like old torM)
+        2. Find first non-system consecutive duplicate in decompressed M-entries (full text)
+        3. Return the longer result (raw blob can truncate compressed subjects)
         """
         if not blob or len(blob) < 50:
             return ""
 
-        # Strategy 0: Use the original ese_reader extraction (works on raw blob)
-        try:
-            from core.ese_reader import extract_subject_from_property_blob
-            result = extract_subject_from_property_blob(blob)
-            if result:
-                return result
-        except ImportError:
-            pass
+        # Strategy 1: Find <sender_name>M in raw blob
+        raw_result = ""
+        if sender_name and len(sender_name) >= 2:
+            raw_result = self._extract_subject_from_raw_blob(blob, sender_name)
 
-        # Decompress blob for M-entry parsing
+        # Strategy 2: Find first non-system consecutive duplicate in decompressed blob
+        dup_result = ""
         try:
             from dissect.esedb.compression import decompress as dissect_decompress
             decompressed = dissect_decompress(blob)
         except:
             decompressed = blob
 
-        # Parse M entries from decompressed blob
         entries = []
         i = 0
         while i < len(decompressed) - 3:
             if decompressed[i] == ord('M') and 2 <= decompressed[i + 1] <= 100:
                 length = decompressed[i + 1]
                 if i + 2 + length <= len(decompressed):
-                    content = decompressed[i + 2:i + 2 + length]
-                    entries.append(content)
+                    entries.append(decompressed[i + 2:i + 2 + length])
                     i += 2 + length
                     continue
             i += 1
 
-        if not entries:
-            return ""
-
-        # Strategy 1: Find first non-system consecutive duplicate pair
         for j in range(len(entries) - 1):
             if entries[j] != entries[j + 1] or len(entries[j]) < 2:
                 continue
             content = entries[j]
-            # Skip non-printable
             if not all(32 <= b <= 126 for b in content):
                 continue
-            # Skip system paths
             lower = content.lower()
             if any(w in lower for w in [b'fydib', b'recipients', b'cn=',
                                          b'/o=', b'/ou=', b'nistrative',
                                          b'administrative', b'indexing',
                                          b'bigfunnel']):
                 continue
-            # Skip emails and Message-IDs
             if b'@' in content or content.startswith(b'<'):
                 continue
-            # Skip if it matches sender name (sender can also appear as dup)
-            if sender_name:
-                if content.decode('ascii', errors='ignore').strip().lower() == sender_name.lower():
-                    continue
-            # Found the subject
+            if sender_name and content.decode('ascii', errors='ignore').strip().lower() == sender_name.lower():
+                continue
             if self._looks_like_repeat_encoding(content):
-                return self._decode_repeat_pattern(bytes([len(content)]) + content)
-            return content.decode('ascii', errors='ignore').strip()
+                dup_result = self._decode_repeat_pattern(bytes([len(content)]) + content)
+            else:
+                dup_result = content.decode('ascii', errors='ignore').strip()
+            break
 
-        # Strategy 2: Sender-based — find sender, take next non-system text entry
-        if sender_name and len(sender_name) >= 2:
-            sender_lower = sender_name.lower().encode('ascii', errors='ignore').strip()
-            sender_idx = -1
-            for idx, content in enumerate(entries):
-                content_lower = content.lower().rstrip(b'\x00').strip()
-                if content_lower == sender_lower:
-                    sender_idx = idx
-                    break
-                if len(sender_lower) >= 5 and sender_lower in content_lower:
-                    sender_idx = idx
-                    break
-
-            if sender_idx >= 0:
-                for content in entries[sender_idx + 1:]:
-                    if len(content) < 2 or not all(32 <= b <= 126 for b in content):
-                        continue
-                    lower = content.lower()
-                    if any(w in lower for w in [b'fydib', b'cn=', b'/o=', b'nistrative',
-                                                 b'indexing', b'bigfunnel']):
-                        continue
-                    if b'@' in content or content.startswith(b'<'):
-                        continue
-                    text = content.decode('ascii', errors='ignore').strip()
-                    if text.lower() == sender_name.lower():
-                        continue
-                    if self._looks_like_repeat_encoding(content):
-                        return self._decode_repeat_pattern(bytes([len(content)]) + content)
-                    if len(text) >= 2:
-                        return text
-
-        # Strategy 3: Raw blob — find <sender_name>M, extract printable chars
-        if sender_name and len(sender_name) >= 3:
-            result = self._extract_subject_from_raw_blob(blob, sender_name)
-            if result:
-                return result
-
-        return ""
+        # Prefer decompressed (clean text), fall back to raw blob
+        return dup_result or raw_result
 
     def _extract_subject_from_raw_blob(self, blob: bytes, sender_name: str) -> str:
         """Extract subject from raw blob by finding <sender_name>M pattern."""
